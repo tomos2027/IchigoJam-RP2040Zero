@@ -36,7 +36,7 @@ IchigoJam BASIC 1.6.1 (4K版) の **Waveshare RP2040-Zero** (RP2040) 移植・**
 | **OUT6** | **GP13** | | (IchigoJam_PのGP21から変更) |
 | **SOUND** | **GP14** | | (IchigoJam_PのGP20から変更) |
 | (予備) | GP15 | | |
-| **LED (WS2812)** | **GP16** | 基板実装 | `LED 1`=白色点灯、`WS.LED 7` |
+| **LED (WS2812)** | **GP16** | 基板実装 | `LED 1`=点灯 (50%輝度)、`WS.LED 7` |
 | **IN2** | GP26 | | **ADC0** アナログ入力可 |
 | **IN1** | GP27 | | **ADC1** アナログ入力可 |
 | **BTN** | GP28 | | **ADC2**、ボタン→GND (内部プルアップ) |

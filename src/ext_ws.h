@@ -54,7 +54,7 @@ void __not_in_flash_func(ws_out) (int port, int nled, int repeat) {
 }
 
 //基板内蔵WS2812 (GP16) をLEDコマンド・診断表示に使う (Waveshare RP2040-Zero)
-//LED 1=白色点灯、LED 0=消灯。WS2812はラッチ型のため、状態が変わったときだけ送信する
+//LED 1=点灯 (50%輝度)、LED 0=消灯。WS2812はラッチ型のため、状態が変わったときだけ送信する
 static bool led_builtin_last = false;
 static bool led_builtin_started = false;
 void led_builtin(bool on) {
@@ -68,7 +68,7 @@ void led_builtin(bool on) {
     gpio_set_dir(ws_pin, GPIO_OUT);
     gpio_put(ws_pin, false);
     sleep_us(300); //リセット信号
-    uint32_t v = on ? 0xFFFFFFu : 0x000000u; //白 (GRB順だが白は全ビット1で同じ)
+    uint32_t v = on ? 0x404040u : 0x000000u; // 半分の輝度 (50%デューティ) — 眩しいため
     int save = save_and_disable_interrupts();
     for (int k = 23; k >= 0; k--) {
         wsled_send_one_signal_1575((v >> k) & 0x01u);

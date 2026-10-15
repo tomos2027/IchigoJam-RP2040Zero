@@ -139,6 +139,12 @@ bool timer(repeating_timer_t* rt) {
         }
     } else {
         vram_to_tvram_all(_g.cursorflg);
+        //ハートビート: 内蔵WS2812を約1Hzで点滅 (システム生存確認、IchigoJam_Pと同じ)
+        static bool heartbeat = true;
+        if ((frames & 31) == 0) {
+            heartbeat = !heartbeat;
+            led_builtin(heartbeat);
+        }
     }
     //中でsleep_ms()が呼ばれたときに止まるので、本来タイマーの中でtuh_task()を呼び出してはいけないが、なぜか動いている
     //pico-sdk/lib/tinyusb/src/osal/osal_pico.h　のosal_task_delay()のsleepをwhileループに置き換えると解決する
