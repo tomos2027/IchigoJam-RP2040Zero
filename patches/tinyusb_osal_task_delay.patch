@@ -1,0 +1,17 @@
+diff --git a/src/osal/osal_pico.h b/src/osal/osal_pico.h
+index 315de09..548bc20 100644
+--- a/src/osal/osal_pico.h
++++ b/src/osal/osal_pico.h
+@@ -40,7 +40,11 @@ extern "C" {
+ // TASK API
+ //--------------------------------------------------------------------+
+ TU_ATTR_ALWAYS_INLINE static inline void osal_task_delay(uint32_t msec) {
+-  sleep_ms(msec);
++  // sleep_ms(msec); // IchigoJam P: タイマー割り込み内からtuh_task()を呼ぶためbusy loop化 (NaturalStyle/tinyusb 7a1b169)
++  uint64_t start = time_us_64();
++  while (time_us_64() - start < msec * 1000) {
++    ;
++  }
+ }
+ 
+ //--------------------------------------------------------------------+
