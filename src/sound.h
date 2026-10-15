@@ -4,44 +4,43 @@
 
 //Waveshare RP2040-Zero: 側面パッドGP14 (IchigoJam_PのGP20から変更: 裏面パッド不使用のため)
 #define SOUND_PIN 14
-// PWMキャリア設定: システムクロック(157.5MHz) / 1024 = ~154kHz (可聴域外)
-#define SOUND_PWM_WRAP 1023
 
-static uint slice_num;
 static uint16 prev_tone = 0;
 static struct repeating_timer audio_timer;
-static bool audio_timer_ok = false;
 
 // オーディオタイマーコールバック (~16kHz)
-// PSGエミュレーションを1ステップ進め、混合値をPWMデューティへ出力
+// PSGエミュレーションを1ステップ進め、チャンネル出力をGP14へ直接出力
+// 圧電ブザー対応: PWMデューティ変調ではなくGPIO直接トグル (方形波)
 static bool audio_timer_callback(repeating_timer_t* rt) {
-    uint8_t mixed = psg_emu_tick();  // 0-45
-    // 混合値をPWMデューティへ変換 (0-45 → 0-1023)
-    uint16_t duty = ((uint16_t)mixed * (SOUND_PWM_WRAP + 1)) / 46;
-    if (duty > SOUND_PWM_WRAP) duty = SOUND_PWM_WRAP;
-    pwm_set_gpio_level(SOUND_PIN, duty);
+    psg_emu_tick();  // PSG状態更新 (各ch出力トグル)
+
+    // アクティブなチャンネルの出力をGP14へ (OR混合)
+    uint8_t mixer = psg_regs[7];
+    bool out = false;
+    for (int i = 0; i < 3 && !out; i++) {
+        bool tone_on = !((mixer >> i) & 1);        // bit0-2: 0=トーン有効
+        bool noise_on = !((mixer >> (i + 3)) & 1);  // bit3-5: 0=ノイズ有効
+        uint8_t vol = psg_regs[8 + i] & 0x0F;
+        if (vol == 0) continue;
+        if (tone_on && psg_ch[i].output) out = true;
+        if (!out && noise_on && psg_noise.output) out = true;
+    }
+    gpio_put(SOUND_PIN, out);
     return true;
 }
 
 void sound_init() {
     _g.psgratio = 1;
-    // PWMキャリア設定 (フルシステムクロック、高周波キャリア+デューティ変調)
-    // clkdiv=1.0 → PWMカウンタはシステムクロック(157.5MHz)で動作
-    // wrap=1023 → キャリア周波数 = 157.5MHz/1024 ≈ 154kHz (完全に可聴域外)
-    // スピーカーのインダクタンスが自然なローパスフィルタとなり、オーディオ信号のみが到達する
-    gpio_set_function(SOUND_PIN, GPIO_FUNC_PWM);
-    slice_num = pwm_gpio_to_slice_num(SOUND_PIN);
-    pwm_set_clkdiv(slice_num, 1.0f);              // フルシステムクロック
-    pwm_set_wrap(slice_num, SOUND_PWM_WRAP);      // 1024ステップ → ~154kHzキャリア
-    pwm_set_gpio_level(SOUND_PIN, 0);
-    pwm_set_enabled(slice_num, true);
+    // GP14をGPIO出力として設定 (PWM不使用、圧電ブザー直接駆動)
+    gpio_init(SOUND_PIN);
+    gpio_set_dir(SOUND_PIN, GPIO_OUT);
+    gpio_put(SOUND_PIN, 0);
 
     // PSG初期化 (全チャンネル消音)
     psg_emu_init();
 
     // オーディオタイマー (~16kHz) 開始
-    // 63µs周期 → 15873Hz (PSGクロック1789772/112.3に近似)
-    audio_timer_ok = add_repeating_timer_us(-63, audio_timer_callback, NULL, &audio_timer);
+    add_repeating_timer_us(-63, audio_timer_callback, NULL, &audio_timer);
 
     prev_tone = 0;
 }
@@ -54,7 +53,7 @@ void set_tone() {
             // IchigoJam psgtone値 → 周波数 → PSG period
             uint16_t period = psg_emu_tone_to_period(_g.psgtone);
             psg_emu_set_period(0, period);   // chA周波数
-            psg_emu_set_volume(0, 12);        // 適度な音量
+            psg_emu_set_volume(0, 15);        // 最大音量 (圧電ブザーはON/OFFのみ)
             psg_regs[7] &= ~0x01;             // chAトーン有効
         } else {
             // 消音
@@ -65,9 +64,8 @@ void set_tone() {
 }
 
 //クロックを変更したときにPWMの分周比を再設定する
-//注意: PSGオーディオはフルシステムクロック (clkdiv=1.0) を使うため、PWM_CLKDIV_MHZ()は使わない
 void sound_reconfig() {
-    pwm_set_clkdiv(slice_num, 1.0f);
+    // PWM不使用のため再設定不要
     prev_tone = 0;//次のset_toneで再設定させる
 }
 
