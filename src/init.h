@@ -247,11 +247,11 @@ void ichigojam_init() {
 #ifdef IJB_TITLE
     for (int i = 0;; i++) { // 自動起動時は表示だけしない
         char c = IJB_TITLE[i];
+        if (c == '\0')
+            break;
         if (!sleepflg)
             put_chr(c);
         video_waitSync(1);
-        if (c == '\n')
-            break;
     }
 #endif
     if (!sleepflg) {
