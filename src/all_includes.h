@@ -22,6 +22,8 @@
 #include "hardware/i2c.h"
 // SDK定義の後、BASIC命令定義の前にSDドライバーを読み込む (SDON/SDOFF、SAVE/LOAD 200-299)
 #include "sd_card.h"
+// PSGエミュレーション (AY-3-8910、MSX互換) — sound.hより前に読み込む
+#include "psg_emu.h"
 
 //pico-extras
 #include "pico/sleep.h"

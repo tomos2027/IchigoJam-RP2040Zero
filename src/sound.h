@@ -2,50 +2,77 @@
 #define __SOUND_H__
 #include "all_includes.h"
 
-//側面パッドGP14 (IchigoJam_PのGP20から変更: 裏面パッド不使用のため)
+//Waveshare RP2040-Zero: 側面パッドGP14 (IchigoJam_PのGP20から変更: 裏面パッド不使用のため)
 #define SOUND_PIN 14
+// PWMキャリア設定: 1MHz / 64 = 15.6kHz超の高周波キャリア
+#define SOUND_PWM_WRAP 63
 
 static uint slice_num;
 static uint16 prev_tone = 0;
+static struct repeating_timer audio_timer;
+
+// オーディオタイマーコールバック (~16kHz)
+// PSGエミュレーションを1ステップ進め、混合値をPWMデューティへ出力
+static bool audio_timer_callback(repeating_timer_t* rt) {
+    uint8_t mixed = psg_emu_tick();  // 0-45
+    // 混合値をPWMデューティへ変換 (0-45 → 0-64)
+    // 簡易スケール: duty = mixed * 64 / 45 → mixed + mixed/2 ≈ 近似
+    uint16_t duty = ((uint16_t)mixed * (SOUND_PWM_WRAP + 1)) / 46;
+    if (duty > SOUND_PWM_WRAP) duty = SOUND_PWM_WRAP;
+    pwm_set_gpio_level(SOUND_PIN, duty);
+    return true;
+}
 
 void sound_init() {
     _g.psgratio = 1;
+    // PWMキャリア設定 (固定高周波、デューティで音を表現)
     gpio_set_function(SOUND_PIN, GPIO_FUNC_PWM);
     slice_num = pwm_gpio_to_slice_num(SOUND_PIN);
-    pwm_set_clkdiv(slice_num, PWM_CLKDIV_MHZ());
-    pwm_set_wrap(slice_num, 0);//適当に小さい値を設定しておかないと起動音が鳴らない
+    pwm_set_clkdiv(slice_num, PWM_CLKDIV_MHZ());  // 1MHzカウンタ
+    pwm_set_wrap(slice_num, SOUND_PWM_WRAP);      // 64ステップ → ~15.6kHzキャリア
+    pwm_set_gpio_level(SOUND_PIN, 0);
     pwm_set_enabled(slice_num, true);
+
+    // PSG初期化 (全チャンネル消音)
+    psg_emu_init();
+
+    // オーディオタイマー (~16kHz) 開始
+    // 15873Hz = 1789772 / 112.3 → 63µs周期
+    add_repeating_timer_us(-63, audio_timer_callback, NULL, &audio_timer);
+
     prev_tone = 0;
 }
 
 void set_tone() {
+    // 60FPSタイマーから呼ばれる: MMLパーサーが _g.psgtone を設定した後
+    // _g.psgtone → PSG period変換 → レジスタ設定
     if (prev_tone != _g.psgtone) {
-        if (_g.psgtone) {//オン
-            int freq = 60 * 261 / 2 / _g.psgtone;   //IchigoJamのソースの式 / 2
-            int wrap = 1000000 / freq - 1;//PWMのカウントクロックは1MHzなのでそのまま周波数から計算できる
-            if (wrap < 0) {
-                wrap = 0;
-            } else if (wrap > 0xffff) {
-                wrap = 0xffff;
-            }
-            pwm_set_wrap(slice_num, wrap);
-            pwm_set_gpio_level(SOUND_PIN, wrap / 2);
-        } else {//オフ
-            pwm_set_counter(slice_num, 0);
-            pwm_set_gpio_level(SOUND_PIN, 0);
+        if (_g.psgtone) {
+            // IchigoJam psgtone値 → 周波数 → PSG period
+            uint16_t period = psg_emu_tone_to_period(_g.psgtone);
+            psg_emu_set_period(0, period);   // chA周波数
+            psg_emu_set_volume(0, 12);        // 適度な音量
+            psg_regs[7] &= ~0x01;             // chAトーン有効
+        } else {
+            // 消音
+            psg_emu_set_volume(0, 0);
         }
+        prev_tone = _g.psgtone;
     }
-    prev_tone = _g.psgtone;
 }
 
-//クロックを変更したときに分周比を再設定する
+//クロックを変更したときにPWMの分周比を再設定する
 void sound_reconfig() {
     pwm_set_clkdiv(slice_num, PWM_CLKDIV_MHZ());
-    prev_tone = 0;//次のset_toneでwrapを再計算させる
+    prev_tone = 0;//次のset_toneで再設定させる
 }
 
 static void sound_switch(int on) {
-    //何もしない
+    if (on) {
+        psg_regs[7] &= ~0x01;  // chAトーン有効
+    } else {
+        psg_regs[7] |= 0x3F;   // 全チャンネル無効
+    }
 }
 
 #endif

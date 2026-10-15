@@ -387,6 +387,7 @@ S_INLINE void command_clt();
 S_INLINE void command_play();
 S_INLINE void command_beep(); // S_INLINEで4増
 S_INLINE void command_tempo();
+S_INLINE void command_sound_psg(); // MSX PSG レジスタ直接操作 (SOUND reg,val)
 S_INLINE void command_video();
 S_INLINE void command_scroll();
 S_INLINE void command_clp();
@@ -605,6 +606,7 @@ int basic_execute(char* commandline) {
 			case TOKEN_BEEP:	command_beep();							break;
 			case TOKEN_TEMPO:	command_tempo();						break;
 			case TOKEN_PLAY:	command_play();							break;
+			case TOKEN_SOUND:	command_sound_psg();					break; // MSX PSG レジスタ直接操作
 
 			case TOKEN_POKE:	command_poke();							break;
 			case TOKEN_COPY:	command_copy();							break;
@@ -3191,31 +3193,38 @@ S_INLINE void command_bps() {
 	IJB_bps(n, m);
 }
 S_INLINE void command_play() {
-	/*
-	Token t; Token_get(t);
-	if (t.code != TOKEN_STRING) {
-		psg_playMML(NULL);
-		token_back();
-	} else {
-		char* sp = token_skipstr();
-		if (_g.err)
-			return;
-		psg_playMML(sp);
-	}
-	token_end();
-	*/
-	char* mml = NULL;
+	char* mml[3] = { NULL, NULL, NULL };
 
-//	if (token_getChar()) { // ELSE未対策
 	int code = token_getCode(); // ELSE対策 1.2b61
 	token_back();
 	if (code != TOKEN_NULL && code != TOKEN_ELSE) {
 		int16 n = token_expression();
 		if (n >= OFFSET_RAMROM) {
-			mml = (char*)(RAM_AREA + n - OFFSET_RAMROM);
+			mml[0] = (char*)(RAM_AREA + n - OFFSET_RAMROM);
+		}
+		// MSX互換: PLAY "MML1","MML2","MML3" (最大3声)
+		for (int v = 1; v < 3; v++) {
+			code = token_getCode();
+			if (code == TOKEN_COMMA) {
+				int16 nv = token_expression();
+				IJB_ERR_CHK();
+				if (nv >= OFFSET_RAMROM) {
+					mml[v] = (char*)(RAM_AREA + nv - OFFSET_RAMROM);
+				}
+			} else {
+				token_back();
+				break;
+			}
 		}
 	}
-	psg_playMML(mml);
+	// 声1のみ → 従来どおり、声2以降はPhase 2でMMLパーサー拡張
+	psg_playMML(mml[0]);
+	if (mml[1] == NULL && mml[2] == NULL) {
+		// 単声: 従来どおり
+	} else {
+		// 多声: Phase 2 — 現在は声1のみ再生し、声2-3は無視
+		// TODO: mml_state[1]/[2]のMMLパーサー実装
+	}
 	token_end();
 }
 
@@ -3244,6 +3253,26 @@ S_INLINE void command_tempo() {
 	IJB_ERR_CHK();
 	token_end();
 	psg_tempo(tempo);
+}
+
+// MSX PSG レジスタ直接操作: SOUND reg,val
+// SOUND 0-13, 0-255 — AY-3-8910のレジスタに直接書き込む
+// 例: SOUND 0,50 : SOUND 1,7 : SOUND 7,&H38 : SOUND 8,10
+S_INLINE void command_sound_psg() {
+	int16 reg = token_expression();
+	IJB_ERR_CHK();
+	int code = token_getCode();
+	int16 val = 0;
+	if (code == TOKEN_COMMA) {
+		val = token_expression();
+		IJB_ERR_CHK();
+	} else {
+		token_back();
+	}
+	token_end();
+	if (reg >= 0 && reg <= 13) {
+		psg_emu_write(reg, val);
+	}
 }
 S_INLINE void command_video() {
 	int16 video = token_expression();
