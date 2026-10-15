@@ -137,14 +137,9 @@ bool timer(repeating_timer_t* rt) {
             diag_led = !diag_led;
             led_builtin(diag_led);
         }
-    } else {
+     } else {
         vram_to_tvram_all(_g.cursorflg);
-        //ハートビート: 内蔵WS2812を約1Hzで点滅 (システム生存確認、IchigoJam_Pと同じ)
-        static bool heartbeat = true;
-        if ((frames & 31) == 0) {
-            heartbeat = !heartbeat;
-            led_builtin(heartbeat);
-        }
+        //ハートビートなし: 起動後はLEDコマンドがWS2812を制御 (正常時は消灯)
     }
     //中でsleep_ms()が呼ばれたときに止まるので、本来タイマーの中でtuh_task()を呼び出してはいけないが、なぜか動いている
     //pico-sdk/lib/tinyusb/src/osal/osal_pico.h　のosal_task_delay()のsleepをwhileループに置き換えると解決する
@@ -210,7 +205,7 @@ void pico_init() {
     gpio_pull_up(UART_TX_PIN);
     gpio_pull_up(UART_RX_PIN);
 
-    //動作確認のため、省電力モード以外のときは内蔵WS2812 (GP16) を点灯させる
+    //動作確認のため、内蔵WS2812 (GP16) を起動中表示として一時的に点灯させる
     led_builtin(true);
 
     // init host stack on configured roothub port
@@ -263,7 +258,8 @@ void ichigojam_init() {
         put_str("OK\n");
     }
     _g.sleepflg = sleepflg;
-
+    //起動完了: 内蔵WS2812を消灯し、以降はLEDコマンドが制御を担当する
+    led_builtin(false);
 }
 
 #endif
