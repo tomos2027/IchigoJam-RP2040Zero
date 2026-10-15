@@ -3,20 +3,21 @@
 #include "all_includes.h"
 
 //Waveshare RP2040-Zero パッド割り当て
-//GP0-15は側面エッジパッド、GP16-22/26-28は裏面パッド (はんだ付けで引き出し)
-//ピン番号はIchigoJam_P (Pico) と同一
+//側面エッジパッド: GP0-15 + GP26-28 (+電源/GND)
+//裏面パッド: GP17-25 (本機では未使用)
+//GP6/7/8/10/11はSDカード (SPI1) と共有 (SDON中はOUT/PWM/WS.LED/IR.INがブロックされる)
 #define LED 16  // 基板内蔵WS2812 (led_builtinドライバで駆動、ext_ws.hで定義、WS.LED 7でも使用可)
-#define BTN 28  // 裏面パッド (ADC2)  GNDとの間にボタンを接続 (内部プルアップ)
-#define IN1 27  // 裏面パッド (ADC1)
-#define IN2 26  // 裏面パッド (ADC0)
-#define IN3 6   // 側面パッド
-#define IN4 7   // 側面パッド
-#define OUT1 8  // 側面パッド
+#define BTN 28  // 側面パッド (ADC2)  GNDとの間にボタンを接続 (内部プルアップ)
+#define IN1 27  // 側面パッド (ADC1)
+#define IN2 26  // 側面パッド (ADC0)
+#define IN3 6   // 側面パッド (SD CSと共有)
+#define IN4 7   // 側面パッド (SDカード検出と共有)
+#define OUT1 8  // 側面パッド (SD MISOと共有)
 #define OUT2 9  // 側面パッド
-#define OUT3 10 // 側面パッド
-#define OUT4 11 // 側面パッド
-#define OUT5 22 // 裏面パッド
-#define OUT6 21 // 裏面パッド
+#define OUT3 10 // 側面パッド (SD CLKと共有)
+#define OUT4 11 // 側面パッド (SD MOSIと共有)
+#define OUT5 12 // 側面パッド (IchigoJam_PのGP22から変更: 裏面パッド不使用のため)
+#define OUT6 13 // 側面パッド (IchigoJam_PのGP21から変更: 裏面パッド不使用のため)
 
 #define IO_PIN_NUM 11
 
@@ -47,6 +48,9 @@ void IJB_pwm(int port, int plen, int len) {
         plen = PLEN_MAX;
     }
     uint8 pin = out_pins[port - 1];
+    if (sd_pin_reserved(pin)) {
+        return;//SD動作中の共有ピンはPWM化禁止
+    }
     gpio_set_function(pin, GPIO_FUNC_PWM);
     uint slice_num = pwm_gpio_to_slice_num(pin);
     pwm_set_clkdiv(slice_num, PWM_CLKDIV_MHZ());
@@ -88,11 +92,14 @@ void io_init() {
     adc_init();
     for (int i = 0; i < 4; i++) {
         uint8 pin = in_pins[i];
+        if (sd_pin_reserved(pin)) {
+            continue;//SD動作中の共有ピン (IN3/IN4) はスキップ
+        }
         gpio_init(pin);
         gpio_pull_up(pin);
     }
     for (int i = 1; i <= 6; i++) {
-        IJB_out(i, 0);
+        IJB_out(i, 0);//IJB_out内でsd_pin_reservedチェック
     }
     //LED (GP16) は基板内蔵WS2812のためGPIO直接制御せずled_builtinで駆動する (pico_initで点灯)
     gpio_init(BTN);
@@ -147,6 +154,9 @@ int IJB_in() {
     int res = 0;
     for (int i = 0; i < IO_PIN_NUM; i++) {
         int pin = in_pins[i];
+        if (sd_pin_reserved(pin) || pin == SD_DETECT_PIN) {
+            continue;//SD動作中の共有ピンは読まない (意味のない値を返さない)
+        }
         bool bit = gpio_get(pin);
         res |= bit << i;
     }
@@ -162,6 +172,9 @@ void IJB_out(int port, int st) {
             if (i == 6) {//LEDポート(7)は基板内蔵WS2812のためgpio_putしない
                 continue;
             }
+            if (sd_pin_reserved(out_pins[i])) {
+                continue;//SD動作中の共有ピンはブロック
+            }
             gpio_put(out_pins[i], st & (1 << i));
         }
         led_builtin((st & (1 << 6)) != 0);
@@ -169,6 +182,9 @@ void IJB_out(int port, int st) {
         led_builtin(st != 0);
     } else {
         uint8 pin = out_pins[port - 1];
+        if (sd_pin_reserved(pin)) {
+            return;//SD動作中の共有ピン (OUT1/3/4) はブロック
+        }
         gpio_init(pin);
         if (st >= 0) {//OUT
             gpio_set_dir(pin, GPIO_OUT);
@@ -213,8 +229,8 @@ static int ir_port_to_gpio(int port) {
     switch (port) {
         case 1: return IN1;
         case 2: return IN2;
-        case 3: return IN3;
-        case 4: return IN4;
+        case 3: return sd_pin_reserved(IN3) ? -1 : IN3;//SD動作中は使用不可
+        case 4: return sd_pin_reserved(IN4) ? -1 : IN4;//SD動作中は使用不可
     }
     return -1;
 }

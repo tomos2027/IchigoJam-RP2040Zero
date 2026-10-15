@@ -3,13 +3,14 @@
  * 元実装: Canon-boy4 氏 GivetakeJam_P (ichigojam-firm rp2350-16130 ブランチ) MIT license
  * https://github.com/Canon-boy4/ichigojam-firm/tree/rp2350-16130
  *
- * Waveshare RP2040-Zero向け改変:
- *  - 基板にTFスロットがないため、側面エッジパッドのGP12-15へSDカードを外部配線する
- *    MISO=GP12 (カードDAT0)、CS=GP13 (カードDAT3)、SCK=GP14 (カードCLK)、MOSI=GP15 (カードCMD)
- *    IchigoJamのIN/OUTポートと完全に無衝突のため、SDON中もI/Oは常時利用可能
- *  - カード検出ピンは省略。未挿入はCMD0の失敗(エラー2)で検知する
- *  - ピン共有保護(sd_pin_reserved)機構は不要のため削除 (元実装の機構)
- *  - 400kHzで初期化し1MHzで転送する。読み取りに失敗したら100kHzへ自動フォールバック (元実装の機構を流用)
+ * Waveshare RP2040-Zero向け改変 (GivetakeJam_P元仕様のピン共有方式):
+ *  - 基板にTFスロットがないため、SDカードモジュールを側面エッジパッドに外部配線する
+ *    MISO=GP8 (OUT1と共有)、CS=GP6 (IN3と共有)、CLK=GP10 (OUT3と共有)、MOSI=GP11 (OUT4と共有)
+ *    カード検出=GP7 (IN4と共有、SDモジュールのCD端子またはGND直結でLOW=挿入)
+ *  - SDON中は共有ピン (OUT1/OUT3/OUT4/IN3/IN4) のOUT/PWM/WS.LED/IR.INをブロックする
+ *    (sd_pin_reserved機構、SDOFFでI/O状態へ復帰)
+ *  - 起動時のOUT端子LOWという既存仕様は変更しない。SDOFFでIN3はプルアップ入力へ戻す
+ *  - 400kHzで初期化し1MHzで転送する。読み取りに失敗したら100kHzへ自動フォールバック
  *
  * 元実装の仕様 (維持):
  * ポーリング方式。DMAは使用せず、SD処理全体で割り込みを禁止しない (NTSC表示は維持される)。
@@ -29,17 +30,22 @@
 #include "hardware/spi.h"
 #include "hardware/gpio.h"
 
-// SDカード (SPI1、外部配線: 側面エッジパッドGP12-15)
-#define SD_MISO_PIN 12    // カードDAT0/MISO
-#define SD_SELECT_PIN 13   // カードDAT3/CS
-#define SD_CLK_PIN 14      // カードSCK/CLK
-#define SD_MOSI_PIN 15     // カードCMD/MOSI
-// クロック (内蔵スロットは配線が短くWaveshare公式デモも12.5MHz以上で実績がある)
+// SDカード (SPI1、GivetakeJam_P準拠の共有ピン方式)
+#define SD_MISO_PIN 8     // DAT0/MISO (OUT1/GP8と共有)
+#define SD_SELECT_PIN 6   // DAT3/CS   (IN3/GP6と共有)
+#define SD_CLK_PIN 10     // SCK/CLK   (OUT3/GP10と共有)
+#define SD_MOSI_PIN 11    // CMD/MOSI  (OUT4/GP11と共有)
+#define SD_DETECT_PIN 7   // カード検出 (IN4/GP7と共有、LOW=挿入)
+// クロック
 #define SD_INIT_HZ 400000     // 初期化時 (SD仕様の上限は400kHz)
 #define SD_HZ 1000000         // 通常転送
 #define SD_FALLBACK_HZ 100000  // 読み取りエラー時のフォールバック先
 
+// SDON中に他の命令から再設定してはいけない端子 (共有ピン保護)
 static bool sd_pins_reserved = false;
+static inline bool sd_pin_reserved(unsigned pin) {
+    return sd_pins_reserved && (pin == SD_SELECT_PIN || pin == SD_MISO_PIN || pin == SD_CLK_PIN || pin == SD_MOSI_PIN);
+}
 static bool sd_initialized = false;
 static bool sd_fat_ready = false;
 static bool sd_files_index_ready = false;
@@ -94,19 +100,28 @@ static uint8_t sd_command(uint8_t cmd, uint32_t arg) {
     for (unsigned n = 0; n < 10; n++) { uint8_t r = sd_byte(0xff); if (!(r & 0x80)) return r; }
     return 0xff;
 }
-// カード検出: 本基板のTFスロットは検出ピンが未配線のため常に挿入されているものとして扱う。
-// 未挿入はCMD0の失敗 (エラー2) で検知する。
+// IN4/GP7をプルアップ入力とし、LOWをカード挿入として判定する (GivetakeJam_P準拠)。
+// SDモジュールのCD端子をGP7に接続、またはGP7をGNDに直結(常時挿入扱い)すること。
 static bool sd_card_present(void) {
-    return true;
+    gpio_init(SD_DETECT_PIN); gpio_set_dir(SD_DETECT_PIN, GPIO_IN);
+    gpio_pull_up(SD_DETECT_PIN); sleep_us(50);
+    return !gpio_get(SD_DETECT_PIN);
 }
-// SDを解放。CSをHIGH(プルアップ入力)に戻し、SPIピンを入力にする。診断値は保持する。
+// SDを解放。先にCSをHIGH(非選択)にし、共有ピンをIchigoJamのI/O状態へ戻す (GivetakeJam_P準拠)。
+// IN3/GP6=CSはプルアップ入力へ、IN4/GP7=検出もプルアップ入力へ、
+// OUT1-4/GP8-11の出力はLOWへ戻す (起動時のOUT端子LOWという既存仕様を維持)。
 static void sd_card_off(void) {
     if (sd_pins_reserved) { sd_release(); spi_deinit(spi1); }
+    // CS (IN3/GP6): プルアップ入力へ戻す
     gpio_put(SD_SELECT_PIN, 1);
     gpio_init(SD_SELECT_PIN); gpio_pull_up(SD_SELECT_PIN);
-    gpio_init(SD_MISO_PIN); gpio_pull_up(SD_MISO_PIN);
-    gpio_init(SD_CLK_PIN);
-    gpio_init(SD_MOSI_PIN);
+    gpio_put(SD_SELECT_PIN, 1); gpio_set_dir(SD_SELECT_PIN, GPIO_IN);
+    // 検出 (IN4/GP7): プルアップ入力へ戻す
+    gpio_init(SD_DETECT_PIN); gpio_set_dir(SD_DETECT_PIN, GPIO_IN);
+    gpio_pull_up(SD_DETECT_PIN);
+    // OUT1-4 (GP8-11): 出力LOWへ戻す (GP9/OUT2も含め隣接ピンをまとめてリセット)
+    const uint pins[] = { 8, 9, 10, 11 };
+    for (unsigned i = 0; i < 4; i++) { gpio_init(pins[i]); gpio_put(pins[i], 0); gpio_set_dir(pins[i], GPIO_OUT); }
     sd_initialized = false; sd_fat_ready = false; sd_files_index_ready = false; sd_pins_reserved = false; sd_block_addressed = false;
 }
 

@@ -33,6 +33,9 @@ void __not_in_flash_func(ws_out) (int port, int nled, int repeat) {
         nled = IJB_SIZEOF_ARRAY_MAX / 3;
     }
     ws_pin = out_pins[port - 1];
+    if (sd_pin_reserved(ws_pin)) {
+        return;//SD動作中の共有ピン (OUT1/3/4) はWS2812出力禁止
+    }
     gpio_init(ws_pin);
     gpio_set_dir(ws_pin, GPIO_OUT);
     gpio_put(ws_pin, false);

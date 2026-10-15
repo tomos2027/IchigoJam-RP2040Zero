@@ -2,7 +2,8 @@
 #define __SOUND_H__
 #include "all_includes.h"
 
-#define SOUND_PIN 20
+//側面パッドGP14 (IchigoJam_PのGP20から変更: 裏面パッド不使用のため)
+#define SOUND_PIN 14
 
 static uint slice_num;
 static uint16 prev_tone = 0;
