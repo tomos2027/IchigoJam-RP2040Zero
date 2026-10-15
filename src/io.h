@@ -6,7 +6,8 @@
 //側面エッジパッド: GP0-15 + GP26-28 (+電源/GND)
 //裏面パッド: GP17-25 (本機では未使用)
 //GP6/7/8/10/11はSDカード (SPI1) と共有 (SDON中はOUT/PWM/WS.LED/IR.INがブロックされる)
-#define LED 16  // 基板内蔵WS2812 (led_builtinドライバで駆動、ext_ws.hで定義、WS.LED 7でも使用可)
+//GP16は基板内蔵WS2812 (ハートビート/診断専用、ext_ws.hのled_builtinで駆動)
+#define LED 15  // 側面パッド (LEDコマンド/WS.LED 7で使用、通常GPIO)
 #define BTN 28  // 側面パッド (ADC2)  GNDとの間にボタンを接続 (内部プルアップ)
 #define IN1 27  // 側面パッド (ADC1)
 #define IN2 26  // 側面パッド (ADC0)
@@ -18,6 +19,8 @@
 #define OUT4 11 // 側面パッド (SD MOSIと共有)
 #define OUT5 12 // 側面パッド (IchigoJam_PのGP22から変更: 裏面パッド不使用のため)
 #define OUT6 13 // 側面パッド (IchigoJam_PのGP21から変更: 裏面パッド不使用のため)
+#define SOUND 14 // 側面パッド (sound.hで定義、IchigoJam_PのGP20から変更)
+//GP16: 基板内蔵WS2812 (ハートビート/診断専用、LEDコマンドでは使用しない)
 
 #define IO_PIN_NUM 11
 
@@ -32,7 +35,7 @@
 #define PWM_WRAP 19999 // 1MHz / 50Hz - 1
 
 void sound_reconfig();//sound.hで定義 (io.hより後ろにincludeされるため前方宣言)
-void led_builtin(bool on);//ext_ws.hで定義 (基板内蔵WS2812=GP16をLEDコマンド/診断表示に使う)
+void led_builtin(bool on);//ext_ws.hで定義 (基板内蔵WS2812=GP16をハートビート/診断表示に使う、LEDコマンドはGP15)
 
 static uint8 in_pins[] = { IN1, IN2, IN3, IN4, OUT1, OUT2, OUT3, OUT4, BTN, OUT5, OUT6 };
 static uint8 out_pins[] = { OUT1, OUT2, OUT3, OUT4, OUT5, OUT6, LED, IN1, IN2, IN3, IN4 };
@@ -101,7 +104,10 @@ void io_init() {
     for (int i = 1; i <= 6; i++) {
         IJB_out(i, 0);//IJB_out内でsd_pin_reservedチェック
     }
-    //LED (GP16) は基板内蔵WS2812のためGPIO直接制御せずled_builtinで駆動する (pico_initで点灯)
+    //LED (GP15) は通常GPIO出力として初期化 (LOW=消灯)
+    gpio_init(LED);
+    gpio_set_dir(LED, GPIO_OUT);
+    gpio_put(LED, 0);
     gpio_init(BTN);
     gpio_pull_up(BTN);
 }
@@ -169,17 +175,11 @@ void IJB_out(int port, int st) {
     }
     if (port == 0) {
         for (int i = 0; i < IO_PIN_NUM; i++) {
-            if (i == 6) {//LEDポート(7)は基板内蔵WS2812のためgpio_putしない
-                continue;
-            }
             if (sd_pin_reserved(out_pins[i])) {
                 continue;//SD動作中の共有ピンはブロック
             }
             gpio_put(out_pins[i], st & (1 << i));
         }
-        led_builtin((st & (1 << 6)) != 0);
-    } else if (port == 7) {//LED: 基板内蔵WS2812 (GP16)
-        led_builtin(st != 0);
     } else {
         uint8 pin = out_pins[port - 1];
         if (sd_pin_reserved(pin)) {

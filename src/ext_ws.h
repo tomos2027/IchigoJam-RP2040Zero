@@ -23,7 +23,7 @@ void __not_in_flash_func(wsled_send_one_signal_1575) (bool bit) { //NTSCモー�
 }
 
 //WS.LED port,n[,repeat] (4K版: ポート選択式+拡張配列変数対応)
-//port: 1-7 (OUT1-6、7=LED/GP16=基板内蔵WS2812)、n: LED数、repeat: 送信回数
+//port: 1-7 (OUT1-6、7=LED/GP15=外部WS2812)、n: LED数、repeat: 送信回数
 //色データは配列変数[0]〜[n*3-1]から読み込む (1LEDにつき3変数、[102]-[357]の拡張領域に対応し最大119LED)
 void __not_in_flash_func(ws_out) (int port, int nled, int repeat) {
     if (port < 1 || port > 7 || nled < 1 || repeat < 1) {
@@ -53,27 +53,30 @@ void __not_in_flash_func(ws_out) (int port, int nled, int repeat) {
     restore_interrupts(save);
 }
 
-//基板内蔵WS2812 (GP16) をLEDコマンド・診断表示に使う (Waveshare RP2040-Zero)
-//LED 1=点灯 (50%輝度)、LED 0=消灯。WS2812はラッチ型のため、状態が変わったときだけ送信する
-static bool led_builtin_last = false;
-static bool led_builtin_started = false;
-void led_builtin(bool on) {
-    if (led_builtin_started && on == led_builtin_last) {
-        return;
-    }
-    led_builtin_last = on;
-    led_builtin_started = true;
-    ws_pin = LED;
+//===== 基板内蔵WS2812 (GP16) — ハートビート/診断表示専用 =====
+//LEDコマンドはGP15を制御 (io.h)、WS.LED 7もGP15から出力する
+//GP16は本関数 (led_builtin) のみから制御される: timer()のハートビート、エラー時の高速点滅
+
+static uint8 led_builtin_pin = 16;// 基板内蔵WS2812 (GP16に固定)
+
+// 基板内蔵WS2812を1色で送信 (緑)
+static void led_builtin_send(bool on) {
+    ws_pin = led_builtin_pin;
     gpio_init(ws_pin);
     gpio_set_dir(ws_pin, GPIO_OUT);
     gpio_put(ws_pin, false);
     sleep_us(300); //リセット信号
-    uint32_t v = on ? 0x004000u : 0x000000u; // 赤 (GRB順: G=0x00, R=0x40, B=0x00)
+    uint32_t v = on ? 0x400000u : 0x000000u; // 緑 (GRB順: G=0x40, R=0x00, B=0x00)
     int save = save_and_disable_interrupts();
     for (int k = 23; k >= 0; k--) {
         wsled_send_one_signal_1575((v >> k) & 0x01u);
     }
     restore_interrupts(save);
+}
+
+// 基板内蔵WS2812を制御 (ハートビート/診断用、LEDコマンドでは使用しない)
+void led_builtin(bool on) {
+    led_builtin_send(on);
 }
 
 #endif

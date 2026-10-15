@@ -139,7 +139,13 @@ bool timer(repeating_timer_t* rt) {
         }
      } else {
         vram_to_tvram_all(_g.cursorflg);
-        //ハートビートなし: 起動後はLEDコマンドがWS2812を制御 (正常時は消灯)
+        //ハートビート: 内蔵WS2812 (GP16) を約1Hzで緑点滅 (システム生存確認)
+        //LEDコマンドはGP15を制御 (GP16とは独立)
+        static bool heartbeat = true;
+        if ((frames & 31) == 0) {
+            heartbeat = !heartbeat;
+            led_builtin(heartbeat);
+        }
     }
     //中でsleep_ms()が呼ばれたときに止まるので、本来タイマーの中でtuh_task()を呼び出してはいけないが、なぜか動いている
     //pico-sdk/lib/tinyusb/src/osal/osal_pico.h　のosal_task_delay()のsleepをwhileループに置き換えると解決する
@@ -205,8 +211,8 @@ void pico_init() {
     gpio_pull_up(UART_TX_PIN);
     gpio_pull_up(UART_RX_PIN);
 
-    //動作確認のため、内蔵WS2812 (GP16) を起動中表示として一時的に点灯させる
-    led_builtin(true);
+    //ハートビートはtimer()で開始されるため、ここでは点灯しない
+    //LEDコマンドはGP15 (io.h) を制御、GP16はハートビート専用
 
     // init host stack on configured roothub port
     tuh_init(BOARD_TUH_RHPORT);
@@ -258,8 +264,6 @@ void ichigojam_init() {
         put_str("OK\n");
     }
     _g.sleepflg = sleepflg;
-    //起動完了: 内蔵WS2812を消灯し、以降はLEDコマンドが制御を担当する
-    led_builtin(false);
 }
 
 #endif
