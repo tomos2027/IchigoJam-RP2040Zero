@@ -68,7 +68,7 @@ void led_builtin(bool on) {
     gpio_set_dir(ws_pin, GPIO_OUT);
     gpio_put(ws_pin, false);
     sleep_us(300); //リセット信号
-    uint32_t v = on ? 0x404040u : 0x000000u; // 半分の輝度 (50%デューティ) — 眩しいため
+    uint32_t v = on ? 0x400000u : 0x000000u; // 赤 (GRB順: G=0x00, R=0x40, B=0x00)
     int save = save_and_disable_interrupts();
     for (int k = 23; k >= 0; k--) {
         wsled_send_one_signal_1575((v >> k) & 0x01u);
