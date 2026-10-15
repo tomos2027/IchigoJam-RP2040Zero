@@ -39,12 +39,9 @@ static struct {
     bool hold;         // 停止後 hold
 } psg_env;
 
-// 混合出力最大値 (3ch × 音量15)
+// PWM設定はsound.hで管理 (SOUND_PWM_WRAP=1023, キャリア~154kHz)
+// PSG_MIX_MAXはPSGエミュレーション内部での最大値
 #define PSG_MIX_MAX 45
-// PWMキャリア設定 (1MHz / 64 = 15625Hz以上の高周波)
-#define PSG_PWM_WRAP 63
-// PWMデューティへのスケール
-#define PSG_PWM_SCALE ((PSG_PWM_WRAP + 1) * 4 / (PSG_MIX_MAX + 1))  // ≈5
 
 // エンベロープレベル計算
 // shape (R13 bits 0-3): bit3=continue, bit2=attack, bit1=alternate, bit0=hold
