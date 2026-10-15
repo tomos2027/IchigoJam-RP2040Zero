@@ -19,7 +19,7 @@
 #ifdef IJB_BETA
 #define IJB_TITLE "IchigoJam BASIC 1.5b rv jig.jp\n"
 #else
-#define IJB_TITLE "IchigoJam BASIC " STRING2(IJB_VER_STR) " by jig.jp forked by na-s.jp\n"
+#define IJB_TITLE "NeoJam BASIC " STRING2(IJB_VER_STR) " NTSC-4K forked by NEXTDAY\n"
 #endif
 
 #define ENABLE_I2C_BPS
