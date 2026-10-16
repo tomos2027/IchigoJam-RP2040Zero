@@ -32,9 +32,13 @@ void sound_init() {
     psg_emu_timer_running = false;
     // 16kHzオーディオ用の専用アラームプール (60FPSタイマーと別のハードウェアアラーム)
     // 最高優先割り込みにする: 60FPSコールバック (USBタスク含む) 実行中でも音が途切れない
+    // ※pico-sdk 2.xのデフォルトアラームプールはアラーム3 (PICO_TIME_DEFAULT_ALARM_POOL_HARDWARE_ALARM_NUM=3)
+    //   を使用中のため、使用中の番号を直接指定するとpanicする → 未使用アラームを自動取得する
     if (!psg_emu_pool) {
-        psg_emu_pool = alarm_pool_create(3, 1);
-        irq_set_priority(TIMER_IRQ_3, 0);
+        psg_emu_pool = alarm_pool_create_with_unused_hardware_alarm(1);
+        if (psg_emu_pool) {
+            irq_set_priority(TIMER_IRQ_0 + alarm_pool_hardware_alarm_num(psg_emu_pool), 0);
+        }
     }
 }
 
@@ -69,7 +73,7 @@ void sound_set_multi_mode(bool on, bool by_play) {
             pwm_set_enabled(slice_num, true);
             psg_emu_init();
             sound_multi_mode = true;
-            if (!psg_emu_timer_running) {
+            if (!psg_emu_timer_running && psg_emu_pool) { // プール取得失敗時は無音で継続 (クラッシュ防止)
                 psg_emu_timer_running = true;
                 alarm_pool_add_repeating_timer_us(psg_emu_pool, -SOUND_EMU_TIMER_US,
                     psg_emu_timer_callback, NULL, &psg_emu_timer);
