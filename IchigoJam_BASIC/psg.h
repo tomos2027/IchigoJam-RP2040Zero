@@ -273,7 +273,6 @@ void psg_playMML_multi(char* mml0, char* mml1, char* mml2) {
         if (mmls[ch]) {
             mml_init_state(st);
             st->mml = mmls[ch];
-            st->tempo = _g.psgtempo;
         } else if (st->mml) {
             st->mml = NULL;
             st->tone = 0;
