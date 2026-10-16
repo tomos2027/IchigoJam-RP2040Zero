@@ -3,7 +3,7 @@
 #ifndef __PSG_H__
 #define __PSG_H__
 
-// playMML (3ch PSG対応版)
+// playMML (3ch MMLパーサー、PWM音声出力)
 
 // 定義必要
 #ifndef PSG_TICK_FREQ
@@ -28,21 +28,22 @@ S_INLINE void sound_tick();
 static void sound_switch(int on);
 static void sound_init();
 
-//===== 3ch MML状態 (Phase 2: 多声PLAY対応) =====
+//===== 3ch MML状態 (多声PLAY構文対応) =====
+// 現在の音声出力はvoice 0 (chA) のみPWMで出力
+// voices 1-2はMML解析結果を保存 (将来の多ch出力で使用)
 struct mml_state {
     char* mml;        // MML文字列ポインタ (NULL=停止中)
     char* rep;        // リピート位置 ($コマンド)
     uint8_t oct;      // 現在のオクターブ
     uint8_t deflen;   // デフォルト音符長
     uint16_t tempo;   // テンポ
-    uint16_t tone;    // 現在のトーン値 (TONEテーブル値、_g.psgtone互換)
+    uint16_t tone;    // 現在のトーン値 (TONEテーブル値)
     uint16_t len;     // 残り音符長 (60FPSティック)
     uint16_t waitcnt; // ウェイトカウンタ
-    uint8_t volume;   // V0-V15 音量 (PSG R8-R10に書き込む)
+    uint8_t volume;   // V0-V15 音量 (将来の多ch出力で使用)
 };
 static struct mml_state mml_ch[3];  // chA=0, chB=1, chC=2
 
-// MML状態初期化
 static void mml_init_state(struct mml_state* st) {
     st->mml = NULL;
     st->rep = NULL;
@@ -55,7 +56,7 @@ static void mml_init_state(struct mml_state* st) {
     st->volume = PSG_DEFAULT_VOLUME;
 }
 
-//===== TONEテーブル (既存と同じ) =====
+//===== TONEテーブル =====
 #define TONE_LEN (12 * 6) // O1C - O6B
 const uint8 TONE[] = {
 	240, 227, 214, 202, 191, 180, 170, 160, 151, 143, 135, 127, // O1
@@ -88,17 +89,10 @@ S_INLINE uint8 psg_toupper(uint8 c) {
 }
 
 //===== 1ch分のMML処理 (psg_tickから呼ばれる) =====
-// ch: 0=chA, 1=chB, 2=chC
+// ch=0: 音声出力あり (_g.psgtone → set_tone() → PWM)
+// ch=1,2: MML解析のみ (音声出力は将来の多ch対応で追加)
 static void psg_process_voice(int ch) {
     struct mml_state* st = &mml_ch[ch];
-
-    // サウンダー (互換性維持、音声出力には不使用)
-    if (st->tone) {
-        st->waitcnt++;
-        if (st->waitcnt == st->tone) {
-            st->waitcnt = 0;
-        }
-    }
 
     // 音符長カウントダウン
     if (st->len) {
@@ -107,11 +101,12 @@ static void psg_process_voice(int ch) {
         }
         // 音符終了
         if (!st->mml) {
-            // MMLなし → このチャンネルを消音
-            psg_emu_set_volume(ch, 0);
-            psg_regs[7] |= (1 << ch); // トーン無効
+            // MMLなし → 音を止める
             st->tone = 0;
-            if (ch == 0) _g.psgtone = 0; // 後方互換
+            if (ch == 0) {
+                _g.psgtone = 0;
+                sound_switch(0); // PWM消音
+            }
         }
     }
 
@@ -155,7 +150,7 @@ static void psg_process_voice(int ch) {
         } else if (c == 'T') {
             st->tempo = psg_parseInt(&st->mml);
             continue;
-        } else if (c == 'V') { // V0-V15 音量コマンド (Phase 2新規)
+        } else if (c == 'V') { // V0-V15 音量コマンド (将来の多ch出力で有効)
             uint32 v = psg_parseInt(&st->mml);
             if (v > 15) v = 15;
             st->volume = v;
@@ -190,15 +185,14 @@ static void psg_process_voice(int ch) {
                 flg = 1;
                 continue;
             }
-            // MML終了 → このチャンネルを消音
+            // MML終了 → 音を止める
             st->mml = NULL;
             st->tone = 0;
             st->len = 0;
-            psg_emu_set_volume(ch, 0);
-            psg_regs[7] |= (1 << ch);
             if (ch == 0) {
                 _g.psgmml = NULL;
                 _g.psgtone = 0;
+                sound_switch(0);
             }
             return;
         }
@@ -251,32 +245,20 @@ static void psg_process_voice(int ch) {
             }
         }
 
-        // PSGレジスタに直接書き込み
+        // トーン設定 (set_tone()がPWM周波数を制御)
         st->tone = s;
         st->waitcnt = s - 1;
         st->len = calcDivU(len * ((60 * PSG_TICK_FREQ) >> 3) * _g.psgratio, st->tempo);
 
-        if (s) {
-            // 音あり → PSGレジスタ設定
-            uint16_t period = psg_emu_tone_to_period(s);
-            psg_emu_set_period(ch, period);
-            psg_emu_set_volume(ch, st->volume);
-            psg_regs[7] &= ~(1 << ch); // トーン有効
-        } else {
-            // 休符 (R) → 消音
-            psg_emu_set_volume(ch, 0);
-        }
-
-        // 後方互換: ch0の状態を_gに反映
         if (ch == 0) {
-            _g.psgtone = st->tone;
+            _g.psgtone = s;
             _g.psglen = st->len;
         }
         break;
     }
 }
 
-//===== メインタICK (60FPSタイマーから呼ばれる) =====
+//===== メインTICK (60FPSタイマーから呼ばれる) =====
 S_INLINE void psg_tick() {
     for (int ch = 0; ch < 3; ch++) {
         psg_process_voice(ch);
@@ -291,24 +273,24 @@ void psg_playMML_multi(char* mml0, char* mml1, char* mml2) {
         if (mmls[ch]) {
             mml_init_state(st);
             st->mml = mmls[ch];
-            st->tempo = _g.psgtempo; // 現在のTEMPOを引き継ぐ
+            st->tempo = _g.psgtempo;
         } else if (st->mml) {
-            // この声のMMLを停止
             st->mml = NULL;
             st->tone = 0;
             st->len = 0;
-            psg_emu_set_volume(ch, 0);
-            psg_regs[7] |= (1 << ch);
+            if (ch == 0) {
+                sound_switch(0);
+            }
         }
-        // NULLでない場合は既存のMMLを継続（中断しない）
     }
-    // 後方互換
+    // 後方互換 (voice 0)
     _g.psgmml = mml_ch[0].mml;
     _g.psgtone = mml_ch[0].tone;
     _g.psglen = mml_ch[0].len;
     _g.psgoct = mml_ch[0].oct;
     _g.psgdeflen = mml_ch[0].deflen;
     _g.psgrep = mml_ch[0].rep;
+    sound_switch(mml_ch[0].mml != NULL);
 }
 
 //===== 単声PLAY (従来互換) =====
@@ -323,18 +305,12 @@ S_INLINE void psg_beep(int tone, int len) {
     st->tone = tone * _g.psgratio;
     st->waitcnt = st->tone - 1;
     st->mml = NULL;
-    st->volume = PSG_DEFAULT_VOLUME;
 
-    // PSGレジスタ直接書き込み
-    uint16_t period = psg_emu_tone_to_period(st->tone);
-    psg_emu_set_period(0, period);
-    psg_emu_set_volume(0, st->volume);
-    psg_regs[7] &= ~0x01; // chAトーン有効
-
-    // 後方互換
+    // 後方互換 (set_tone()がPWM周波数を設定)
     _g.psgtone = st->tone;
     _g.psglen = st->len;
     _g.psgmml = NULL;
+    sound_switch(tone);
 }
 
 //===== TEMPO (全声に適用) =====
@@ -345,12 +321,9 @@ S_INLINE void psg_tempo(int tempo) {
     }
 }
 
-//===== サウンド状態 (何らかの声が再生中か) =====
+//===== サウンド状態 =====
 S_INLINE int psg_sound() {
-    for (int ch = 0; ch < 3; ch++) {
-        if (mml_ch[ch].tone || mml_ch[ch].mml) return 1;
-    }
-    return 0;
+    return _g.psgtone || _g.psgmml;
 }
 
 // __PSG_H__
