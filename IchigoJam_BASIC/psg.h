@@ -31,13 +31,13 @@ void sound_set_multi_mode(bool on, bool by_play); // 多声PSGモード切替 (s
 
 //===== 音声出力モード (sound.hと共有、psg.hが先にincludeされるためここで定義) =====
 // false: PWMトーンモード (BEEP・単声PLAY: ハードPWM方形波でクリーンな音)
-// true:  多声PSGエミュモード (PLAY多声・SOUND: ~16kHz割り込みで3ch混合デューティ出力)
+// true:  多声PSGエミュモード (PLAY多声・SOUND: ~30kHz割り込みで3ch混合デューティ出力)
 static bool sound_multi_mode = false;
 static bool sound_multi_play = false; // 多声PLAYがモードON (全声終了で自動OFF)
 
 //===== 3ch MML状態 (多声PLAY対応) =====
 // 単声 (BEEP・PLAY 1声): voice 0 → PWMトーン出力
-// 多声 (PLAY 2-3声): 各voice → PSGエミュ (psg_emu.h) → 16kHz混合出力
+// 多声 (PLAY 2-3声): 各voice → PSGエミュ (psg_emu.h) → 30kHz混合出力
 struct mml_state {
     char* mml;        // MML文字列ポインタ (NULL=停止中)
     char* rep;        // リピート位置 ($コマンド)
@@ -97,7 +97,7 @@ S_INLINE uint8 psg_toupper(uint8 c) {
 
 //===== 1ch分のMML処理 (psg_tickから呼ばれる) =====
 // 単声モード: ch=0のトーン → _g.psgtone → set_tone() → PWM
-// 多声モード: 各chの周波数・音量 → PSGレジスタ (psg_emu) → 16kHz混合出力
+// 多声モード: 各chの周波数・音量 → PSGレジスタ (psg_emu) → 30kHz混合出力
 static void psg_process_voice(int ch) {
     struct mml_state* st = &mml_ch[ch];
 

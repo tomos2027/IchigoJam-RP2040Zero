@@ -10,10 +10,10 @@
 
 // PSGクロック (MSX標準)
 #define PSG_CLOCK       1789772
-// オーディオ割り込みレート (~16kHz)
-#define PSG_EMU_RATE    15873
-// 1割り込みあたりのPSGクロック数
-#define PSG_TICK_CLOCKS (PSG_CLOCK / PSG_EMU_RATE)  // ≈112
+// オーディオ割り込みレート (~30kHz: サンプリングを上げ折り返し・エッジジッタを低減)
+#define PSG_EMU_RATE    30303
+// 1割り込みあたりのPSGクロック数 (1789772 × 33µs ≈ 59.06 → 59、音程誤差-0.1%以下)
+#define PSG_TICK_CLOCKS 59
 
 // PSGレジスタ (R0-R13)
 static uint8_t psg_regs[16];
@@ -146,10 +146,10 @@ void psg_emu_init() {
     psg_env.hold = false;
 }
 
-// メインtick (~16kHzオーディオタイマーから呼ばれる)
-// 3chトーン+ノイズ+エンベロープを処理し、混合値を返す
-// 戻り値: 0-45 (3ch各0-15の混合)
-uint8_t psg_emu_tick() {
+// メインtick (~30kHzオーディオタイマーから呼ばれる)
+// 3chトーン+ノイズ+エンベロープを処理し、双極性混合値を返す
+// 戻り値: -45..+45 (3ch各±15の双極性混合、DCオフセットなし)
+int8_t psg_emu_tick() {
     // --- トーンチャンネル ---
     for (int i = 0; i < 3; i++) {
         uint16_t period = psg_regs[i * 2] | (psg_regs[i * 2 + 1] << 8);
@@ -197,9 +197,9 @@ uint8_t psg_emu_tick() {
         }
     }
 
-    // --- ミキサー ---
+    // --- ミキサー (双極性: 各ch ±音量、DCオフセットなし) ---
     uint8_t mixer = psg_regs[7];
-    uint8_t mixed = 0;
+    int8_t mixed = 0;
 
     for (int i = 0; i < 3; i++) {
         uint8_t vol_reg = psg_regs[8 + i];
@@ -209,14 +209,12 @@ uint8_t psg_emu_tick() {
         bool tone_on = !((mixer >> i) & 1);    // bit0-2: 0=tone on
         bool noise_on = !((mixer >> (i + 3)) & 1); // bit3-5: 0=noise on
 
-        uint8_t signal = 0;
-        if (tone_on && psg_ch[i].output) {
-            signal = vol;
+        if (tone_on || noise_on) {
+            // ゲート出力: +音量 / -音量 (休符=音量0は±0で無音)
+            bool out = (tone_on && psg_ch[i].output) || (noise_on && psg_noise.output);
+            mixed += out ? (int8_t)vol : -(int8_t)vol;
         }
-        if (noise_on && psg_noise.output) {
-            if (signal < vol) signal = vol;
-        }
-        mixed += signal;
+        // トーン・ノイズとも無効なch (ミキサーR7でOFF) は0出力
     }
 
     return mixed;
