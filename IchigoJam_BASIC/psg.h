@@ -27,10 +27,17 @@ S_INLINE void psg_tempo(int tempo);
 S_INLINE void sound_tick();
 static void sound_switch(int on);
 static void sound_init();
+void sound_set_multi_mode(bool on, bool by_play); // 多声PSGモード切替 (sound.hで定義)
 
-//===== 3ch MML状態 (多声PLAY構文対応) =====
-// 現在の音声出力はvoice 0 (chA) のみPWMで出力
-// voices 1-2はMML解析結果を保存 (将来の多ch出力で使用)
+//===== 音声出力モード (sound.hと共有、psg.hが先にincludeされるためここで定義) =====
+// false: PWMトーンモード (BEEP・単声PLAY: ハードPWM方形波でクリーンな音)
+// true:  多声PSGエミュモード (PLAY多声・SOUND: ~16kHz割り込みで3ch混合デューティ出力)
+static bool sound_multi_mode = false;
+static bool sound_multi_play = false; // 多声PLAYがモードON (全声終了で自動OFF)
+
+//===== 3ch MML状態 (多声PLAY対応) =====
+// 単声 (BEEP・PLAY 1声): voice 0 → PWMトーン出力
+// 多声 (PLAY 2-3声): 各voice → PSGエミュ (psg_emu.h) → 16kHz混合出力
 struct mml_state {
     char* mml;        // MML文字列ポインタ (NULL=停止中)
     char* rep;        // リピート位置 ($コマンド)
@@ -40,7 +47,7 @@ struct mml_state {
     uint16_t tone;    // 現在のトーン値 (TONEテーブル値)
     uint16_t len;     // 残り音符長 (60FPSティック)
     uint16_t waitcnt; // ウェイトカウンタ
-    uint8_t volume;   // V0-V15 音量 (将来の多ch出力で使用)
+    uint8_t volume;   // V0-V15 音量 (多声モードでPSG ch音量として反映)
 };
 static struct mml_state mml_ch[3];  // chA=0, chB=1, chC=2
 
@@ -89,8 +96,8 @@ S_INLINE uint8 psg_toupper(uint8 c) {
 }
 
 //===== 1ch分のMML処理 (psg_tickから呼ばれる) =====
-// ch=0: 音声出力あり (_g.psgtone → set_tone() → PWM)
-// ch=1,2: MML解析のみ (音声出力は将来の多ch対応で追加)
+// 単声モード: ch=0のトーン → _g.psgtone → set_tone() → PWM
+// 多声モード: 各chの周波数・音量 → PSGレジスタ (psg_emu) → 16kHz混合出力
 static void psg_process_voice(int ch) {
     struct mml_state* st = &mml_ch[ch];
 
@@ -103,9 +110,12 @@ static void psg_process_voice(int ch) {
         if (!st->mml) {
             // MMLなし → 音を止める
             st->tone = 0;
+            if (sound_multi_mode) {
+                psg_emu_set_volume(ch, 0); // このchを消音 (多声モード中のBEEP終了含む)
+            }
             if (ch == 0) {
                 _g.psgtone = 0;
-                sound_switch(0); // PWM消音
+                sound_switch(0); // PWM消音 (多声モード中はsound_switch内で無視)
             }
         }
     }
@@ -150,7 +160,7 @@ static void psg_process_voice(int ch) {
         } else if (c == 'T') {
             st->tempo = psg_parseInt(&st->mml);
             continue;
-        } else if (c == 'V') { // V0-V15 音量コマンド (将来の多ch出力で有効)
+        } else if (c == 'V') { // V0-V15 音量コマンド (多声モードでPSG ch音量として反映)
             uint32 v = psg_parseInt(&st->mml);
             if (v > 15) v = 15;
             st->volume = v;
@@ -189,6 +199,9 @@ static void psg_process_voice(int ch) {
             st->mml = NULL;
             st->tone = 0;
             st->len = 0;
+            if (sound_multi_mode) {
+                psg_emu_set_volume(ch, 0); // このchを消音
+            }
             if (ch == 0) {
                 _g.psgmml = NULL;
                 _g.psgtone = 0;
@@ -245,11 +258,21 @@ static void psg_process_voice(int ch) {
             }
         }
 
-        // トーン設定 (set_tone()がPWM周波数を制御)
+        // トーン設定 (多声モード: PSGレジスタへ / 単声モード: set_tone()がPWM周波数を制御)
         st->tone = s;
         st->waitcnt = s - 1;
         st->len = calcDivU(len * ((60 * PSG_TICK_FREQ) >> 3) * _g.psgratio, st->tempo);
 
+        if (sound_multi_mode) {
+            // 多声PSGエミュモード: このchの周波数・音量をPSGレジスタへ
+            if (s) {
+                psg_emu_set_period(ch, psg_emu_tone_to_period(s));
+                psg_emu_set_volume(ch, st->volume);
+                psg_emu_set_tone_enable(ch, true); // トーン有効 (ノイズビットは維持)
+            } else {
+                psg_emu_set_volume(ch, 0); // 休符
+            }
+        }
         if (ch == 0) {
             _g.psgtone = s;
             _g.psglen = st->len;
@@ -263,10 +286,21 @@ S_INLINE void psg_tick() {
     for (int ch = 0; ch < 3; ch++) {
         psg_process_voice(ch);
     }
+    // 多声PLAY終了検出: 全声のMML終了+BEEP残余なし → PWMトーンモードへ自動戻り
+    if (sound_multi_play && !mml_ch[0].mml && !mml_ch[1].mml && !mml_ch[2].mml && !mml_ch[0].len) {
+        sound_set_multi_mode(false, false);
+    }
 }
 
 //===== 多声PLAY開始 =====
 void psg_playMML_multi(char* mml0, char* mml1, char* mml2) {
+    // 2声以上指定 → 多声PSGエミュモード / 単声・停止 → PWMトーンモード (クリーンな音)
+    if (mml1 != NULL || mml2 != NULL) {
+        psg_emu_init(); // 前回の多声/SOUNDコマンドの状態をリセット
+        sound_set_multi_mode(true, true);
+    } else {
+        sound_set_multi_mode(false, false);
+    }
     char* mmls[3] = { mml0, mml1, mml2 };
     for (int ch = 0; ch < 3; ch++) {
         struct mml_state* st = &mml_ch[ch];
@@ -305,7 +339,18 @@ S_INLINE void psg_beep(int tone, int len) {
     st->waitcnt = st->tone - 1;
     st->mml = NULL;
 
-    // 後方互換 (set_tone()がPWM周波数を設定)
+    if (sound_multi_mode) {
+        // 多声モード中はPSG chAでBEEP (chB/CのBGMは維持)
+        if (st->tone > 0) {
+            psg_emu_set_period(0, psg_emu_tone_to_period(st->tone));
+            psg_emu_set_volume(0, PSG_DEFAULT_VOLUME);
+            psg_emu_set_tone_enable(0, true);
+        } else {
+            psg_emu_set_volume(0, 0);
+        }
+    }
+
+    // 後方互換 (PWMモード: set_tone()が周波数設定 / 多声モード中はsound_switch無視)
     _g.psgtone = st->tone;
     _g.psglen = st->len;
     _g.psgmml = NULL;

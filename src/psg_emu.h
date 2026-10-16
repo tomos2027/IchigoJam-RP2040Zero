@@ -102,6 +102,16 @@ void psg_emu_set_mixer(uint8_t mixer) {
     psg_regs[7] = mixer & 0x3F;
 }
 
+// 指定chのトーンを有効/無効 (R7 bit0-2、0=有効。ノイズ等他のビットは維持) - 多声MML用
+void psg_emu_set_tone_enable(int ch, bool enable) {
+    if (ch < 0 || ch > 2)
+        return;
+    if (enable)
+        psg_regs[7] &= ~(1 << ch);
+    else
+        psg_regs[7] |= (1 << ch);
+}
+
 // 周波数→PSG period変換
 uint16_t psg_emu_freq_to_period(int freq_hz) {
     if (freq_hz < 1) return 4095;
@@ -218,19 +228,6 @@ void psg_emu_silence() {
     psg_regs[9] = 0;
     psg_regs[10] = 0;
     psg_regs[7] = 0x3F;  // 全トーン・ノイズ無効
-}
-
-// BEEP互換: 指定トーンで1chを鳴らす
-void psg_emu_beep(int psgtone, int len) {
-    if (psgtone <= 0) {
-        // 消音
-        psg_emu_silence();
-        return;
-    }
-    uint16_t period = psg_emu_tone_to_period(psgtone);
-    psg_emu_set_period(0, period);
-    psg_emu_set_volume(0, 12);  // 適度な音量
-    psg_regs[7] = 0x3E;  // chA tone on, noise off, chB/C off
 }
 
 #endif

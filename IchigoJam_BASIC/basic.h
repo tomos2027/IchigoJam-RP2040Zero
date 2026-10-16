@@ -3265,6 +3265,7 @@ S_INLINE void command_sound_psg() {
 	}
 	token_end();
 	if (reg >= 0 && reg <= 13) {
+		sound_set_multi_mode(true, false); // 多声PSGモード (SOUND常駐: 単声PLAY/BEEPでPWMへ戻る)
 		psg_emu_write(reg, val);
 	}
 }
