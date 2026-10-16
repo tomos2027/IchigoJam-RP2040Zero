@@ -49,8 +49,14 @@ bool psg_emu_timer_callback(repeating_timer_t* rt) {
         return false;
     }
     int8_t mixed = psg_emu_tick(); // -45..+45 (3ch × 音量±15、双極性混合)
-    // 双極性をデューティへ: 512±495 (17..1007) → 1声あたり振幅2倍・DCオフセットなし
-    pwm_set_gpio_level(SOUND_PIN, 512 + mixed * 11);
+    // 双極性をデューティへ: ×16で1声±240 (47%) ≈ 単声PWMの振幅に相当
+    // 2声までフルスケール、3声同時ピークはクランプ (ソフトリミット)
+    int level = 512 + mixed * 16;
+    if (level < 0)
+        level = 0;
+    if (level > SOUND_PWM_WRAP)
+        level = SOUND_PWM_WRAP;
+    pwm_set_gpio_level(SOUND_PIN, level);
     if (!sound_multi_mode) {
         pwm_set_gpio_level(SOUND_PIN, 0); // モードOFFへの切替競合対策: 消音を保証
     }

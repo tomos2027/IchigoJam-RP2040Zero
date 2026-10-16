@@ -187,7 +187,11 @@ int8_t psg_emu_tick() {
         }
         if (toggles == 1) {
             // counter = エッジからの経過時間 → このtick内のHIGH割合 (×64)
+            // ※period変更直後は前音符の持ち越し位相でcb>64になり得る → クランプ
+            //   (gate破壊 = ノート切替ごとの「プツ」音の原因)
             uint32_t cb = psg_ch[i].counter;
+            if (cb > PSG_TICK_CLOCKS)
+                cb = PSG_TICK_CLOCKS;
             psg_ch[i].gate = psg_ch[i].output ? cb : (PSG_TICK_CLOCKS - cb);
         } else {
             // トグル0回 または period<64の超高音で多回トグル: 硬いゲート
