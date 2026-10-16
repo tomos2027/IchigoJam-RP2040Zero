@@ -3217,14 +3217,8 @@ S_INLINE void command_play() {
 			}
 		}
 	}
-	// 声1のみ → 従来どおり、声2以降はPhase 2でMMLパーサー拡張
-	psg_playMML(mml[0]);
-	if (mml[1] == NULL && mml[2] == NULL) {
-		// 単声: 従来どおり
-	} else {
-		// 多声: Phase 2 — 現在は声1のみ再生し、声2-3は無視
-		// TODO: mml_state[1]/[2]のMMLパーサー実装
-	}
+	// 声1→chA、声2→chB、声3→chC (Phase 2: 多声PLAY)
+	psg_playMML_multi(mml[0], mml[1], mml[2]);
 	token_end();
 }
 

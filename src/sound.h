@@ -18,8 +18,8 @@ static bool audio_timer_callback(repeating_timer_t* rt) {
     uint8_t mixer = psg_regs[7];
     bool out = false;
     for (int i = 0; i < 3 && !out; i++) {
-        bool tone_on = !((mixer >> i) & 1);        // bit0-2: 0=トーン有効
-        bool noise_on = !((mixer >> (i + 3)) & 1);  // bit3-5: 0=ノイズ有効
+        bool tone_on = !((mixer >> i) & 1);
+        bool noise_on = !((mixer >> (i + 3)) & 1);
         uint8_t vol = psg_regs[8 + i] & 0x0F;
         if (vol == 0) continue;
         if (tone_on && psg_ch[i].output) out = true;
@@ -31,7 +31,7 @@ static bool audio_timer_callback(repeating_timer_t* rt) {
 
 void sound_init() {
     _g.psgratio = 1;
-    // GP14をGPIO出力として設定 (PWM不使用、圧電ブザー直接駆動)
+    // GP14をGPIO出力として設定 (PWM不使用、圧電ブザー/スピーカー直接駆動)
     gpio_init(SOUND_PIN);
     gpio_set_dir(SOUND_PIN, GPIO_OUT);
     gpio_put(SOUND_PIN, 0);
@@ -39,34 +39,26 @@ void sound_init() {
     // PSG初期化 (全チャンネル消音)
     psg_emu_init();
 
+    // MML状態初期化
+    for (int ch = 0; ch < 3; ch++) {
+        mml_init_state(&mml_ch[ch]);
+    }
+
     // オーディオタイマー (~16kHz) 開始
     add_repeating_timer_us(-63, audio_timer_callback, NULL, &audio_timer);
 
     prev_tone = 0;
 }
 
+// MMLパーサーが直接PSGレジスタを書くため、set_tone()は不要
+// (Phase 1からの移行: 60FPSタイマーから呼ばれていたが、psg_tick内で処理)
 void set_tone() {
-    // 60FPSタイマーから呼ばれる: MMLパーサーが _g.psgtone を設定した後
-    // _g.psgtone → PSG period変換 → レジスタ設定
-    if (prev_tone != _g.psgtone) {
-        if (_g.psgtone) {
-            // IchigoJam psgtone値 → 周波数 → PSG period
-            uint16_t period = psg_emu_tone_to_period(_g.psgtone);
-            psg_emu_set_period(0, period);   // chA周波数
-            psg_emu_set_volume(0, 15);        // 最大音量 (圧電ブザーはON/OFFのみ)
-            psg_regs[7] &= ~0x01;             // chAトーン有効
-        } else {
-            // 消音
-            psg_emu_set_volume(0, 0);
-        }
-        prev_tone = _g.psgtone;
-    }
+    // psg.hのpsg_process_voice()がPSGレジスタを直接書き込むため何もしない
 }
 
-//クロックを変更したときにPWMの分周比を再設定する
+//クロックを変更したとき (PWM不使用のため再設定不要)
 void sound_reconfig() {
-    // PWM不使用のため再設定不要
-    prev_tone = 0;//次のset_toneで再設定させる
+    prev_tone = 0;
 }
 
 static void sound_switch(int on) {
