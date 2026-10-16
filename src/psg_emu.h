@@ -10,10 +10,13 @@
 
 // PSGクロック (MSX標準)
 #define PSG_CLOCK       1789772
-// オーディオ割り込みレート (~30kHz: サンプリングを上げ折り返し・エッジジッタを低減)
-#define PSG_EMU_RATE    30303
-// 1割り込みあたりのPSGクロック数 (1789772 × 33µs ≈ 59.06 → 59、音程誤差-0.1%以下)
-#define PSG_TICK_CLOCKS 59
+// オーディオ割り込み周期 (36µs ≈ 27.8kHz)
+#define PSG_EMU_TIMER_US 36
+// 1割り込みあたりのPSGクロック数 (2のべき乗→小数補間をシフト演算で処理)
+#define PSG_TICK_CLOCKS 64
+// エミュレーションの実効PSGクロック (36µsごとに64クロック = 1777778Hz)
+// 周波数→period変換をこの値で行うことで単声PWMとピッチが完全一致する
+#define PSG_EMU_CLOCK  (PSG_TICK_CLOCKS * 1000000L / PSG_EMU_TIMER_US)
 
 // PSGレジスタ (R0-R13)
 static uint8_t psg_regs[16];
@@ -22,7 +25,12 @@ static uint8_t psg_regs[16];
 static struct {
     int32_t counter;   // 周期カウンタ (DDS)
     bool output;       // 現在の出力状態
+    uint8_t gate;      // このtick内でHIGHだった割合 0-64 (小数エッジ補間用)
 } psg_ch[3];
+
+// 内部DDSピリオド (16bit拡張: AY実機の12bit下限は~218Hzだが、
+// IchigoJamの低音域O1~O3 (32-217Hz) を再生するため内部は16bitで保持)
+static uint16_t psg_ch_period[3];
 
 // ノイズ状態
 static struct {
@@ -73,6 +81,11 @@ static uint8_t psg_env_calc(uint8_t shape, uint8_t pos) {
 void psg_emu_write(uint8_t reg, uint8_t val) {
     if (reg > 15) return;
     psg_regs[reg] = val;
+    // R0-R5書き込み時: 12bitレジスタペアから内部DDSピリオドを再構築 (MSX互換: SOUND経由は12bit上限)
+    if (reg <= 5) {
+        int ch = reg >> 1;
+        psg_ch_period[ch] = psg_regs[ch * 2] | ((psg_regs[ch * 2 + 1] & 0x0F) << 8);
+    }
     // 特定レジスタの変更時に内部状態を更新
     switch (reg) {
         case 13: // エンベロープ形状
@@ -84,10 +97,12 @@ void psg_emu_write(uint8_t reg, uint8_t val) {
 }
 
 // トーン周波数設定 (MMLパーサーから使用)
-// period: PSG 12bit (R0/R1, R2/R3, R4/R5に書き込む)
+// period: 内部DDSは16bitをそのまま使用 (O1低音域まで対応)
+//         上位12bitをMSXレジスタR0/R1, R2/R3, R4/R5へミラー
 void psg_emu_set_period(int ch, uint16_t period) {
     if (ch < 0 || ch > 2) return;
-    psg_regs[ch * 2] = period & 0xFF;         // fine
+    psg_ch_period[ch] = period;
+    psg_regs[ch * 2] = period & 0xFF;         // fine (12bitミラー)
     psg_regs[ch * 2 + 1] = (period >> 8) & 0x0F; // coarse
 }
 
@@ -112,11 +127,12 @@ void psg_emu_set_tone_enable(int ch, bool enable) {
         psg_regs[7] |= (1 << ch);
 }
 
-// 周波数→PSG period変換
+// 周波数→PSG period変換 (エミュ実効クロックで計算: 単声PWMとピッチ完全一致)
+// 16bitまで対応 (AY実機の12bit下限~218Hzを超え、IchigoJam O1の32Hzまでカバー)
 uint16_t psg_emu_freq_to_period(int freq_hz) {
-    if (freq_hz < 1) return 4095;
-    uint32_t period = (uint32_t)PSG_CLOCK / (2 * freq_hz);
-    if (period > 4095) period = 4095;
+    if (freq_hz < 1) return 0;
+    uint32_t period = (uint32_t)PSG_EMU_CLOCK / (2 * freq_hz);
+    if (period > 65535) period = 65535;
     if (period < 1) period = 1;
     return (uint16_t)period;
 }
@@ -136,6 +152,8 @@ void psg_emu_init() {
     for (int i = 0; i < 3; i++) {
         psg_ch[i].counter = 0;
         psg_ch[i].output = false;
+        psg_ch[i].gate = 0;
+        psg_ch_period[i] = 0;
     }
     psg_noise.counter = 0;
     psg_noise.lfsr = 0x1FFFF;  // 17bit LFSR初期値
@@ -146,21 +164,34 @@ void psg_emu_init() {
     psg_env.hold = false;
 }
 
-// メインtick (~30kHzオーディオタイマーから呼ばれる)
+// メインtick (約28kHzオーディオタイマーから呼ばれる)
 // 3chトーン+ノイズ+エンベロープを処理し、双極性混合値を返す
 // 戻り値: -45..+45 (3ch各±15の双極性混合、DCオフセットなし)
 int8_t psg_emu_tick() {
-    // --- トーンチャンネル ---
+    // --- トーンチャンネル (小数エッジ補間付きDDS) ---
+    // トグル点がtick途中に存在する場合、tick内のHIGH割合 (0-64) を算出して
+    // エッジを線形補間する → エッジ量子化ノイズ(高音のビットクラッシュ)を低減
     for (int i = 0; i < 3; i++) {
-        uint16_t period = psg_regs[i * 2] | (psg_regs[i * 2 + 1] << 8);
+        uint16_t period = psg_ch_period[i];
         if (period == 0) {
             psg_ch[i].output = false;
+            psg_ch[i].gate = 0;
             continue;
         }
         psg_ch[i].counter += PSG_TICK_CLOCKS;
+        int toggles = 0;
         while (psg_ch[i].counter >= period) {
             psg_ch[i].counter -= period;
             psg_ch[i].output = !psg_ch[i].output;
+            toggles++;
+        }
+        if (toggles == 1) {
+            // counter = エッジからの経過時間 → このtick内のHIGH割合 (×64)
+            uint32_t cb = psg_ch[i].counter;
+            psg_ch[i].gate = psg_ch[i].output ? cb : (PSG_TICK_CLOCKS - cb);
+        } else {
+            // トグル0回 または period<64の超高音で多回トグル: 硬いゲート
+            psg_ch[i].gate = psg_ch[i].output ? PSG_TICK_CLOCKS : 0;
         }
     }
 
@@ -197,7 +228,7 @@ int8_t psg_emu_tick() {
         }
     }
 
-    // --- ミキサー (双極性: 各ch ±音量、DCオフセットなし) ---
+    // --- ミキサー (双極性: 各ch ±音量、トーンは小数エッジ補間) ---
     uint8_t mixer = psg_regs[7];
     int8_t mixed = 0;
 
@@ -210,9 +241,15 @@ int8_t psg_emu_tick() {
         bool noise_on = !((mixer >> (i + 3)) & 1); // bit3-5: 0=noise on
 
         if (tone_on || noise_on) {
-            // ゲート出力: +音量 / -音量 (休符=音量0は±0で無音)
-            bool out = (tone_on && psg_ch[i].output) || (noise_on && psg_noise.output);
-            mixed += out ? (int8_t)vol : -(int8_t)vol;
+            if (noise_on) {
+                // ノイズ併用chは硬いゲート (ノイズは元々広帯域で補間の効果が薄い)
+                bool out = (tone_on && psg_ch[i].output) || psg_noise.output;
+                mixed += out ? (int8_t)vol : -(int8_t)vol;
+            } else {
+                // トーンのみ: 小数補間付き双極性出力 (gate 0-64 → ±音量)
+                // (vol×(gate-32))>>5: gate=0→-音量, 64→+音量, 32→0
+                mixed += (int8_t)((vol * ((int)psg_ch[i].gate - 32)) >> 5);
+            }
         }
         // トーン・ノイズとも無効なch (ミキサーR7でOFF) は0出力
     }
