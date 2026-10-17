@@ -6,6 +6,7 @@ IchigoJam BASIC 1.6.1 (4K版) の **Waveshare RP2040-Zero** (RP2040) 移植・**
 
 - 映像出力: **NTSCコンポジット** (GP3 + 75Ω + 560pF の外部回路 → テレビの映像入力へ)
 - キーボード: Type-CポートにUSBキーボードを直接接続 (ネイティブUSBホスト)
+- **多声PLAY (最大3声)**: AY-3-8910 (MSX互換) PSGエミュによる混合出力。声ごとの音量 `V0-15`、`SOUND reg,val` レジスタ直接操作に対応 (単声BEEP/PLAYは従来どおりクリーンなPWM方形波)
 - **SDカード**: [GivetakeJam_P](https://github.com/Canon-boy4/ichigojam-firm/tree/rp2350-16130) 準拠の**共有ピン方式** (GP6/7/8/10/11、SDON中は該当OUT/INポートをブロック)
 - **アスキー形式 `SAVE n,1` → `Pnnn.BAS` (UTF-8)** でPC連携可
 - **ANA() アナログ入力対応** (IN1=GP27/ADC1、IN2=GP26/ADC0、BTN=GP28/ADC2)
@@ -34,7 +35,7 @@ IchigoJam BASIC 1.6.1 (4K版) の **Waveshare RP2040-Zero** (RP2040) 移植・**
 | **SD MOSI** | **GP11** | **OUT4と共有** | SDカードのCMD |
 | **OUT5** | **GP12** | | (IchigoJam_PのGP22から変更) |
 | **OUT6** | **GP13** | | (IchigoJam_PのGP21から変更) |
-| **SOUND** | **GP14** | | (IchigoJam_PのGP20から変更) |
+| **SOUND** | **GP14** | | BEEP/PLAY/SOUND (単声PWM / 多声PSGエミュ) (IchigoJam_PのGP20から変更) |
 | (予備) | GP15 | | |
 | **LED** | **GP15** | 側面パッド | `LED 1`/`LED 0` (通常GPIO)、`WS.LED 7` (外部WS2812) |
 | (内蔵WS2812) | GP16 | 基板実装 | ハートビート (緑・1Hz) + エラー診断専用 |
@@ -56,6 +57,15 @@ LRUN 200        … 読み込んで実行
 FILES           … SDON中の省略形=SD一覧 (200-299、先頭行プレビュー)
 SDOFF           … SD終了 (共有ピンがI/Oに復帰)
 ```
+
+## サウンド (多声PLAY / SOUND)
+```
+PLAY "CDE","FGA"        … 2声
+PLAY "CDE","FGA","ABC"  … 3声 (AY-3-8910互換PSGエミュで混合出力)
+BEEP                    … 単声 (クリーンなPWM方形波)
+SOUND 0,228:SOUND 1,7:SOUND 7,254:SOUND 8,15   … MSX PSGレジスタ直接操作 (440Hz)
+```
+3声サンプル (スーパーマリオ風BGM) やMMLコマンド一覧は [MANUAL_JA.md](MANUAL_JA.md) の「7. サウンド」を参照してください。
 
 ## 環境構築 (ビルド)
 
@@ -87,6 +97,7 @@ cmake --build build
 | BASIC | IchigoJam BASIC 1.6.1 (4K版、配列[0..357]) |
 | `VER()` / `VER(1)` | 16130 / 8 (RP2040) |
 | クロック | 157.5MHz (NTSC、VREG 1.20V) |
+| 音声 | BEEP/PLAY単声 (PWM方形波) + 多声最大3声 (AY-3-8910互換PSGエミュ) |
 | 内部保存 | フラッシュ末尾に25本 (1本4096バイト) |
 | SD形式 | FAT32 (MBR/スーパーフロッピー)、8.3名、ルートのみ |
 
