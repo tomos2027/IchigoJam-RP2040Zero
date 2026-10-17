@@ -606,7 +606,9 @@ int basic_execute(char* commandline) {
 			case TOKEN_BEEP:	command_beep();							break;
 			case TOKEN_TEMPO:	command_tempo();						break;
 			case TOKEN_PLAY:	command_play();							break;
-			case TOKEN_SOUND:	command_sound_psg();					break; // MSX PSG レジスタ直接操作
+			case TOKEN_SOUND:	// SOUND(reg,val) 括弧形式 (関数トークン流用)
+			case TOKEN_SOUND_PSG:	// SOUND reg,val 命令形式 (MSX PSG レジスタ直接操作)
+						command_sound_psg();					break;
 
 			case TOKEN_POKE:	command_poke();							break;
 			case TOKEN_COPY:	command_copy();							break;
@@ -3263,6 +3265,10 @@ S_INLINE void command_sound_psg() {
 	} else {
 		token_back();
 	}
+	code = token_getCode();
+	if (code != TOKEN_PAREN_E) {
+		token_back();
+	} // SOUND(reg,val) 括弧形式なら閉じ括弧を消費
 	token_end();
 	if (reg >= 0 && reg <= 13) {
 		sound_set_multi_mode(true, false); // 多声PSGモード (SOUND常駐: 単声PLAY/BEEPでPWMへ戻る)
