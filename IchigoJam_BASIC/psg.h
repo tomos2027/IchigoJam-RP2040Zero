@@ -340,17 +340,12 @@ S_INLINE void psg_beep(int tone, int len) {
     st->mml = NULL;
 
     if (sound_multi_mode) {
-        // 多声モード中はPSG chAでBEEP (chB/CのBGMは維持)
-        if (st->tone > 0) {
-            psg_emu_set_period(0, psg_emu_tone_to_period(st->tone));
-            psg_emu_set_volume(0, PSG_DEFAULT_VOLUME);
-            psg_emu_set_tone_enable(0, true);
-        } else {
-            psg_emu_set_volume(0, 0);
-        }
+        // BEEPは必ずPWM方形波で発音する (圧電ブザーでも確実に鳴る、オリジナルIchigoJam準拠)
+        // 多声PLAY/SOUNDの再生・持続音は停止される (BEEPが音声デバイスを占有)
+        sound_set_multi_mode(false, false);
     }
 
-    // 後方互換 (PWMモード: set_tone()が周波数設定 / 多声モード中はsound_switch無視)
+    // PWMトーンモード: set_tone()が周波数設定
     _g.psgtone = st->tone;
     _g.psglen = st->len;
     _g.psgmml = NULL;
