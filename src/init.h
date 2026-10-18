@@ -114,9 +114,26 @@ bool timer(repeating_timer_t* rt) {
     if (ntsc_dma_buf.canary1 != 0xD1A6B001 || ntsc_dma_buf.canary2 != 0xD1A6B002) err |= 16;//DMAバッファ境界破壊
     if (ntsc_scanline() >= NUM_LINES) err |= 32;//走査線カウンタ破壊
     if (ntsc_mag != 1 && ntsc_mag != 2 && ntsc_mag != 4 && ntsc_mag != 8) err |= 64;//拡大倍率破壊
-    if (err && !ntsc_diag_error) {
-        ntsc_diag_error = err;
-        ntsc_diag_frames = frames;
+    //瞬間的な遷移 (フラッシュ書込後のNTSC再初期化中にrp2040_pwm_ntsc_initが設定する
+    //videomode=VMODE_WIDETEXT等、約1ms以内に復帰する一時状態) の誤検知を防ぐため、
+    //同一エラーが3フレーム連続 (50ms) 継続した場合のみラッチする
+    // (SAVE/KBDのフラッシュ書込後の位相再合わせ ntsc_release+ntsc_init が該当、初回コミットからの構造)
+    static uint32_t diag_prev_err = 0;
+    static uint8_t diag_persist = 0;
+    if (err) {
+        if (!ntsc_diag_error) {
+            if (err == diag_prev_err) {
+                if (++diag_persist >= 3) {
+                    ntsc_diag_error = err;
+                    ntsc_diag_frames = frames;
+                }
+            } else {
+                diag_prev_err = err;
+                diag_persist = 1;
+            }
+        }
+    } else {
+        diag_persist = 0;//エラーが消えたら連続カウントをリセット
     }
     if (ntsc_diag_error) {
         //TVRAMへ直接エラー番号を書く (VRAM経由でないのでVRAMが壊れていても表示される)
