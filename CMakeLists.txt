@@ -23,6 +23,9 @@ add_executable(IchigoJam_RP2040Zero
 	src/ntsc/rp2040_pwm_ntsc_textgraph.c
 )
 
+# WS.LED (WS2812B) はPIOで波形を生成する (CPUの長時間割込み禁止を避ける)
+pico_generate_pio_header(IchigoJam_RP2040Zero ${CMAKE_CURRENT_LIST_DIR}/src/ws2812.pio)
+
 # SCRATCH_Y (core0スタック領域) を16KBに拡大 (複雑な式のスタック溢れ対策、IchigoJam_Pのmemmapと同じ)
 pico_set_linker_script(IchigoJam_RP2040Zero ${CMAKE_CURRENT_LIST_DIR}/memmap_ichigojam_p.ld)
 
@@ -49,6 +52,7 @@ target_link_libraries(IchigoJam_RP2040Zero PUBLIC
 	hardware_i2c
 	hardware_spi
 	hardware_sleep
+	hardware_pio
 )
 
 # pico_enable_stdio_usb(IchigoJam_RP2040Zero 0)
