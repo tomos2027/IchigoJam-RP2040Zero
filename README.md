@@ -8,7 +8,7 @@ A port of IchigoJam BASIC 1.6.1 (4K version) for the **Waveshare RP2040-Zero** b
 - Keyboard: USB keyboard on the Type-C port (native USB host)
 - **Multi-voice PLAY (up to 3 voices)** via AY-3-8910 (MSX-compatible) PSG emulation, with per-voice `V0-15` volume and `SOUND reg,val` register access (single-voice BEEP/PLAY stays clean hardware PWM)
 - SD card: [GivetakeJam_P](https://github.com/Canon-boy4/ichigojam-firm/tree/rp2350-16130) shared-pin design (GP6/7/8/10/11)
-- Onboard WS2812 (GP16) used as the LED command / diagnostic display
+- **LED / `WS.LED 7,n` on GP15** (external LED strip); the onboard WS2812 (GP16) is used for the heartbeat and error diagnostics only
 - **No back-pad pins (GP17-25) are used** — all functions on side edge pads
 
 ## Supported board
@@ -34,10 +34,15 @@ A port of IchigoJam BASIC 1.6.1 (4K version) for the **Waveshare RP2040-Zero** b
 | **OUT5** | **GP12** | | (changed from GP22) |
 | **OUT6** | **GP13** | | (changed from GP21) |
 | **SOUND** | **GP14** | | BEEP/PLAY/SOUND (changed from GP20) |
-| **LED (WS2812)** | **GP16** | onboard | `LED 1`=white, `WS.LED 7` |
+| **LED / WS.LED 7** | **GP15** | side pad | `LED 1`/`LED 0` (plain GPIO), `WS.LED 7,n` (external WS2812) |
+| (onboard WS2812) | GP16 | onboard | heartbeat (green, ~1Hz) + error diagnostics only |
 | **IN2** | GP26 | | **ADC0** analog |
 | **IN1** | GP27 | | **ADC1** analog |
 | **BTN** | GP28 | | **ADC2** |
+
+> **External WS2812 note**: `WS.LED 7,n` outputs on **GP15** (3.3V logic). A 5V WS2812 strip requires a level shifter (e.g. 74AHCT125) and a common GND with a separate 5V supply. Data order is **GRB**.
+>
+> Quick test (1 LED, red): `CLV:LET[0],0,40,0:WS.LED 7,1`
 
 ## Building
 

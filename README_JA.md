@@ -10,7 +10,7 @@ IchigoJam BASIC 1.6.1 (4K版) の **Waveshare RP2040-Zero** (RP2040) 移植・**
 - **SDカード**: [GivetakeJam_P](https://github.com/Canon-boy4/ichigojam-firm/tree/rp2350-16130) 準拠の**共有ピン方式** (GP6/7/8/10/11、SDON中は該当OUT/INポートをブロック)
 - **アスキー形式 `SAVE n,1` → `Pnnn.BAS` (UTF-8)** でPC連携可
 - **ANA() アナログ入力対応** (IN1=GP27/ADC1、IN2=GP26/ADC0、BTN=GP28/ADC2)
-- **基板内蔵WS2812 (GP16)** をLEDコマンド・診断表示・`WS.LED 7`に使用
+- **LED / `WS.LED 7,n` は GP15** (外部WS2812)。基板内蔵WS2812 (GP16) はハートビート・エラー診断専用
 - **裏面パッド (GP17-25) は未使用** — すべての機能が側面エッジパッドで完結
 
 ## 対応基板
@@ -36,8 +36,7 @@ IchigoJam BASIC 1.6.1 (4K版) の **Waveshare RP2040-Zero** (RP2040) 移植・**
 | **OUT5** | **GP12** | | (IchigoJam_PのGP22から変更) |
 | **OUT6** | **GP13** | | (IchigoJam_PのGP21から変更) |
 | **SOUND** | **GP14** | | BEEP/PLAY/SOUND (単声PWM / 多声PSGエミュ) (IchigoJam_PのGP20から変更) |
-| (予備) | GP15 | | |
-| **LED** | **GP15** | 側面パッド | `LED 1`/`LED 0` (通常GPIO)、`WS.LED 7` (外部WS2812) |
+| **LED / WS.LED 7** | **GP15** | 側面パッド | `LED 1`/`LED 0` (通常GPIO)、`WS.LED 7,n` (外部WS2812) |
 | (内蔵WS2812) | GP16 | 基板実装 | ハートビート (緑・1Hz) + エラー診断専用 |
 | **IN2** | GP26 | | **ADC0** アナログ入力可 |
 | **IN1** | GP27 | | **ADC1** アナログ入力可 |
@@ -46,6 +45,10 @@ IchigoJam BASIC 1.6.1 (4K版) の **Waveshare RP2040-Zero** (RP2040) 移植・**
 | UART TX/RX | GP0/1 | | 115200bps |
 
 > **SDON中の共有ピン**: OUT1(GP8)、OUT3(GP10)、OUT4(GP11)、IN3(GP6)、IN4(GP7) はSDカード通信に使用されます。`OUT`/`PWM`/`WS.LED`/`IR.IN` コマンドの該当ポートは自動的にブロックされます。`SDOFF` でピンがI/O状態に復帰します。
+
+> **外部WS2812の注意**: `WS.LED 7,n` の出力は **GP15 (3.3V論理)** です。5V駆動のWS2812テープはVIHが約3.5Vのため、**74AHCT125等のレベルシフタ**とGND共通・5V別電源が必要です。データ順は **GRB** です。
+>
+> 1LEDの動作確認 (赤): `CLV:LET[0],0,40,0:WS.LED 7,1`
 
 ## SDカードの使い方 (GivetakeJam_P準拠)
 ```
