@@ -208,7 +208,11 @@ void ntscv_release(void)
 
 void ntscv_stop(void)
 {
-    ntscv_running = 0;
+    /* 完全停止: DMA/PWM/割込みを解放して同期信号も出さない (ntscv.hの方針どおり)。
+       フラグだけ立てて合成を止めると、4チャネルリングが同じ8走査線分の
+       バッファを再生し続けてフィールドが崩れ、TVが定期的に再同期して
+       画面がフラッシュする。再開は ntscv_init (video_on が自動で行う)。 */
+    ntscv_release();
 }
 
 void ntscv_resume(void)

@@ -31,9 +31,10 @@ void sound_set_multi_mode(bool on, bool by_play); // 多声PSGモード切替 (s
 
 //===== 音声出力モード (sound.hと共有、psg.hが先にincludeされるためここで定義) =====
 // false: PWMトーンモード (BEEP・単声PLAY: ハードPWM方形波でクリーンな音)
-// true:  多声PSGエミュモード (PLAY多声・SOUND: 約28kHz割り込みで3ch混合デューティ出力)
-static bool sound_multi_mode = false;
-static bool sound_multi_play = false; // 多声PLAYがモードON (全声終了で自動OFF)
+// true:  多声PSGエミュモード (PLAY多声・SOUND: 約56kHz割り込みで3ch混合デューティ出力)
+// core0が書き、core1 (オーディオ) が読むため volatile
+static volatile bool sound_multi_mode = false;
+static volatile bool sound_multi_play = false; // 多声PLAYがモードON (全声終了で自動OFF)
 
 //===== 3ch MML状態 (多声PLAY対応) =====
 // 単声 (BEEP・PLAY 1声): voice 0 → PWMトーン出力

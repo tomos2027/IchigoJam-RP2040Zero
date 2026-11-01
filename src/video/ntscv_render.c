@@ -14,7 +14,8 @@ Copyright (c) 2026 the IchigoJam-RP2040Zero authors. MIT license.
     フィールド中ずっとバッファに残り、毎ライン再利用される。
   - 垂直同期は先頭4ライン、各ブランキングは先頭4ラインのみ全書き込みし、
     残りは書き込まない (2チャンク前の内容がそのまま再生される)。
-  - 停止中は一切書き込まない (直前のフィールドが静止画として出る)。
+  - ntscv_running=0 の間は一切書き込まない (ntscv_stop はエンジン自体を
+    解放するため通常到達しない安全策。停止中は同期信号も出ない)。
 
 VRAMは呼び出し側が所有・登録した配列を読むだけ (ライブラリは所有しない)。
 
@@ -400,7 +401,7 @@ void __not_in_flash_func(ntscv_compose_chunk)(uint16_t *dst, uint16_t first_line
        停止中も進めるので映像待ちループが固まらない。 */
     if (first_line == NTSCV_FRAME_MARK_LINE) ntscv_frame_seq++;
 
-    /* 停止中は書き込まない: 直前のフィールドが静止画として再生される */
+    /* 停止中は書き込まない (ntscv_stopはエンジンを解放するため通常は不到達の安全策) */
     if (!ntscv_running) return;
 
     /* カラーバーストを載せるか: カラーモード、またはカラーバー表示中 */

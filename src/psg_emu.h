@@ -7,6 +7,7 @@
 #define __PSG_EMU_H__
 #include "pico/stdlib.h"
 #include "hardware/pwm.h"
+#include "hardware/sync.h"   // __dmb (core間の書き込み順序保証)
 
 // PSGクロック (MSX標準)
 #define PSG_CLOCK       1789772
@@ -22,7 +23,9 @@
 #define PSG_EMU_CLOCK  (PSG_TICK_CLOCKS * 1000000L / PSG_EMU_TIMER_US)
 
 // PSGレジスタ (R0-R13)
-static uint8_t psg_regs[16];
+// core0 (60FPS/MML) が書き、core1 (オーディオISR) が読むため volatile。
+// 書き込み後に __dmb() で順序を保証する。
+static volatile uint8_t psg_regs[16];
 
 // チャンネル状態 (3 tone channels)
 static struct {
@@ -33,7 +36,8 @@ static struct {
 
 // 内部DDSピリオド (16bit拡張: AY実機の12bit下限は~218Hzだが、
 // IchigoJamの低音域O1~O3 (32-217Hz) を再生するため内部は16bitで保持)
-static uint16_t psg_ch_period[3];
+// core0が書きcore1が読むため volatile
+static volatile uint16_t psg_ch_period[3];
 
 // ノイズ状態
 static struct {
@@ -89,6 +93,7 @@ void psg_emu_write(uint8_t reg, uint8_t val) {
             psg_env.level = psg_env_calc(val, 0);
             break;
     }
+    __dmb(); // core1のオーディオISRへ書き込み順序を保証
 }
 
 // トーン周波数設定 (MMLパーサーから使用)
@@ -111,17 +116,20 @@ void psg_emu_set_period(int ch, uint16_t period) {
     psg_ch_period[ch] = period;
     psg_regs[ch * 2] = period & 0xFF;         // fine (12bitミラー)
     psg_regs[ch * 2 + 1] = (period >> 8) & 0x0F; // coarse
+    __dmb();
 }
 
 // 音量設定 (0-15、bit4=エンベロープ使用)
 void psg_emu_set_volume(int ch, uint8_t vol) {
     if (ch < 0 || ch > 2) return;
     psg_regs[8 + ch] = vol & 0x1F;
+    __dmb();
 }
 
 // ミキサー設定 (R7: bit0-2=tone off, bit3-5=noise off, 0=有効)
 void psg_emu_set_mixer(uint8_t mixer) {
     psg_regs[7] = mixer & 0x3F;
+    __dmb();
 }
 
 // 指定chのトーンを有効/無効 (R7 bit0-2、0=有効。ノイズ等他のビットは維持) - 多声MML用
@@ -132,6 +140,7 @@ void psg_emu_set_tone_enable(int ch, bool enable) {
         psg_regs[7] &= ~(1 << ch);
     else
         psg_regs[7] |= (1 << ch);
+    __dmb();
 }
 
 // 周波数→PSG period変換 (エミュ実効クロックで計算: 単声PWMとピッチ完全一致)
@@ -169,12 +178,14 @@ void psg_emu_init() {
     psg_env.position = 0;
     psg_env.level = 0;
     psg_env.hold = false;
+    __dmb();
 }
 
 // メインtick (約56kHzオーディオタイマーから呼ばれる)
 // 3chトーン+ノイズ+エンベロープを処理し、双極性混合値を返す
 // 戻り値: -45..+45 (3ch各±15の双極性混合、DCオフセットなし)
 int8_t __not_in_flash_func(psg_emu_tick)(void) {
+    __dmb(); // core0が書いたレジスタを確実に読む
     // --- トーンチャンネル (小数エッジ補間付きDDS) ---
     // トグル点がtick途中に存在する場合、tick内のHIGH割合 (0-PSG_TICK_CLOCKS) を算出して
     // エッジを線形補間する → エッジ量子化ノイズ(高音のビットクラッシュ)を低減
@@ -278,6 +289,7 @@ void psg_emu_silence() {
     psg_regs[9] = 0;
     psg_regs[10] = 0;
     psg_regs[7] = 0x3F;  // 全トーン・ノイズ無効
+    __dmb();
 }
 
 #endif

@@ -46,6 +46,7 @@ target_include_directories(IchigoJam_RP2040Zero PUBLIC
 target_link_libraries(IchigoJam_RP2040Zero PUBLIC
 	pico_stdlib
 	pico_util
+	pico_multicore
 	tinyusb_host
 	tinyusb_board
 	hardware_flash
