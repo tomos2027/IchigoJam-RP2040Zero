@@ -7,7 +7,7 @@
 
 // 多声PSGモード: PWMデューティ解像度 (キャリア = sysclk/1024 ≈ 154kHz、可聴域外)
 #define SOUND_PWM_WRAP 1023
-// オーディオ割り込み周期はpsg_emu.hのPSG_EMU_TIMER_US (36µs ≈ 27.8kHz) を使用
+// オーディオ割り込み周期はpsg_emu.hのPSG_EMU_TIMER_US (18µs ≈ 55.6kHz) を使用
 
 static uint slice_num;
 static uint16 prev_tone = 0;
@@ -29,7 +29,7 @@ void sound_init() {
     sound_multi_mode = false;
     sound_multi_play = false;
     psg_emu_timer_running = false;
-    // 28kHzオーディオ用の専用アラームプール (60FPSタイマーと別のハードウェアアラーム)
+    // 約56kHzオーディオ用の専用アラームプール (60FPSタイマーと別のハードウェアアラーム)
     // 最高優先割り込みにする: 60FPSコールバック (USBタスク含む) 実行中でも音が途切れない
     // ※pico-sdk 2.xのデフォルトアラームプールはアラーム3 (PICO_TIME_DEFAULT_ALARM_POOL_HARDWARE_ALARM_NUM=3)
     //   を使用中のため、使用中の番号を直接指定するとpanicする → 未使用アラームを自動取得する
@@ -41,9 +41,10 @@ void sound_init() {
     }
 }
 
-// 約28kHzオーディオ割り込み: PSGエミュを1ステップ進め、3ch双極性混合値をPWMデューティへ出力
+// 約56kHzオーディオ割り込み: PSGエミュを1ステップ進め、3ch双極性混合値をPWMデューティへ出力
 // 多声モードOFFを検出したらタイマーは自ら停止する (return false)
-bool psg_emu_timer_callback(repeating_timer_t* rt) {
+// 高レート(18µs)でXIPフラッシュ待ちによるジッタを避けるためRAM実行にする
+bool __not_in_flash_func(psg_emu_timer_callback)(repeating_timer_t* rt) {
     if (!sound_multi_mode) {
         psg_emu_timer_running = false;
         return false;
@@ -64,8 +65,8 @@ bool psg_emu_timer_callback(repeating_timer_t* rt) {
 }
 
 // 多声PSGモード切替 (psg.h / basic.hのSOUNDコマンドから呼ばれる)
-// on=true:  PWMをデューティモード (wrap=1023) にし約28kHzタイマーを開始、PSGエミュ出力
-// on=false: PWMをトーンモード (1MHzカウンタ) に戻す、28kHzタイマーはコールバックが自ら停止
+// on=true:  PWMをデューティモード (wrap=1023) にし約56kHzタイマーを開始、PSGエミュ出力
+// on=false: PWMをトーンモード (1MHzカウンタ) に戻す、56kHzタイマーはコールバックが自ら停止
 // by_play=true: 多声PLAYによるモードON (psg_tickが全声終了を検出して自動OFF)
 void sound_set_multi_mode(bool on, bool by_play) {
     if (on) {
@@ -91,7 +92,7 @@ void sound_set_multi_mode(bool on, bool by_play) {
     } else {
         if (!sound_multi_mode && !sound_multi_play)
             return; // 既にPWMトーンモード
-        sound_multi_mode = false; // 28kHzコールバックが次tickで自ら停止
+        sound_multi_mode = false; // 56kHzコールバックが次tickで自ら停止
         sound_multi_play = false;
         _g.psgtone = 0; // 停止トーンの残存でPWMが再発音するのを防止
         prev_tone = 0;  // set_tone()に再設定させる
@@ -107,7 +108,7 @@ void sound_set_multi_mode(bool on, bool by_play) {
 
 // 60FPSタイマーから呼ばれる: _g.psgtone → PWM周波数設定 (旧IchigoJam_P方式)
 // PWMハードウェアが正確な方形波を生成するため、タイマージッタがなくクリアな音が出る
-// 多声モード中は28kHz割り込みがPWMデューティを制御するため何もしない
+// 多声モード中は56kHz割り込みがPWMデューティを制御するため何もしない
 void set_tone() {
     if (sound_multi_mode) {
         return;
@@ -138,7 +139,7 @@ void sound_reconfig() {
 
 static void sound_switch(int on) {
     if (sound_multi_mode) {
-        return; // 多声モード中は28kHz割り込みが制御 (PWMトーンの開始/停止はしない)
+        return; // 多声モード中は56kHz割り込みが制御 (PWMトーンの開始/停止はしない)
     }
     if (on) {
         // set_tone()がPWM周波数を設定する (ここではPWMを有効化のみ)

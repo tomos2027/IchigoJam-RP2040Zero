@@ -10,12 +10,15 @@
 
 // PSGクロック (MSX標準)
 #define PSG_CLOCK       1789772
-// オーディオ割り込み周期 (36µs ≈ 27.8kHz)
-#define PSG_EMU_TIMER_US 36
+// オーディオ割り込み周期 (18µs ≈ 55.6kHz)
+// 28kHzでは高音(方形波)の高調波がナイキスト(14kHz)を超えて折り返し、
+// 「割れた」音になっていたため倍にして折り返しを低減する
+#define PSG_EMU_TIMER_US 18
 // 1割り込みあたりのPSGクロック数 (2のべき乗→小数補間をシフト演算で処理)
-#define PSG_TICK_CLOCKS 64
-// エミュレーションの実効PSGクロック (36µsごとに64クロック = 1777778Hz)
+#define PSG_TICK_CLOCKS 32
+// エミュレーションの実効PSGクロック (18µsごとに32クロック = 1777778Hz)
 // 周波数→period変換をこの値で行うことで単声PWMとピッチが完全一致する
+// (PSG_TICK_CLOCKS/PSG_EMU_TIMER_USの比は不変なので音程・ノイズ・エンベロープ速度も不変)
 #define PSG_EMU_CLOCK  (PSG_TICK_CLOCKS * 1000000L / PSG_EMU_TIMER_US)
 
 // PSGレジスタ (R0-R13)
@@ -25,7 +28,7 @@ static uint8_t psg_regs[16];
 static struct {
     int32_t counter;   // 周期カウンタ (DDS)
     bool output;       // 現在の出力状態
-    uint8_t gate;      // このtick内でHIGHだった割合 0-64 (小数エッジ補間用)
+    uint8_t gate;      // このtick内でHIGHだった割合 0-PSG_TICK_CLOCKS (小数エッジ補間用)
 } psg_ch[3];
 
 // 内部DDSピリオド (16bit拡張: AY実機の12bit下限は~218Hzだが、
@@ -42,7 +45,7 @@ static struct {
 // エンベロープ状態
 static struct {
     int32_t counter;
-    uint8_t position;  // 0-15 (16step)
+    uint8_t position;  // 0-31 (32step: AY実機同様、三角波は上下で32カウント)
     uint8_t level;     // 現在の音量 0-15
     bool hold;         // 停止後 hold
 } psg_env;
@@ -53,28 +56,19 @@ static struct {
 
 // エンベロープレベル計算
 // shape (R13 bits 0-3): bit3=continue, bit2=attack, bit1=alternate, bit0=hold
-static uint8_t psg_env_calc(uint8_t shape, uint8_t pos) {
-    uint8_t step = pos & 15;
-    uint8_t level;
-    if (shape & 0x04) { // attack (0→15)
-        if (shape & 0x02) { // alternate
-            level = step < 8 ? step : (15 - (step - 8)) * 2;
-            level = step < 8 ? step * 2 : (15 - (step - 8)) * 2;
-        } else {
-            level = step;
-        }
-    } else { // decay (15→0)
-        if (shape & 0x02) { // alternate
-            level = step < 8 ? (15 - step) * 2 : (step - 8) * 2;
-            level = step < 8 ? (15 - step) : (step - 8);
-        } else {
-            level = 15 - step;
-        }
+// pos: 0-31 の32ステップ位置
+//   attack  : 上昇 / alternate で三角波(上→下)
+//   decay   : 下降 / alternate で三角波(下→上)
+//   alternate なしは16ステップで折り返すノコギリ波
+static uint8_t __not_in_flash_func(psg_env_calc)(uint8_t shape, uint8_t pos) {
+    uint8_t p = pos & 31;
+    if (shape & 0x04) { // attack
+        return (shape & 0x02) ? (p < 16 ? p : 31 - p) // 三角波 (上→下)
+                              : (p & 15);             // ノコギリ波 (上)
+    } else { // decay
+        return (shape & 0x02) ? (p < 16 ? 15 - p : p - 16) // 三角波 (下→上)
+                              : (uint8_t)(15 - (p & 15));  // ノコギリ波 (下)
     }
-    // hold判定: shape bit0=hold, bit3=continue
-    // hold で continue なし → 1サイクル後に停止
-    // continue あり → 繰り返し
-    return level > 15 ? 15 : level;
 }
 
 // PSGレジスタ書き込み
@@ -92,6 +86,7 @@ void psg_emu_write(uint8_t reg, uint8_t val) {
             psg_env.position = 0;
             psg_env.counter = 0;
             psg_env.hold = false;
+            psg_env.level = psg_env_calc(val, 0);
             break;
     }
 }
@@ -101,6 +96,18 @@ void psg_emu_write(uint8_t reg, uint8_t val) {
 //         上位12bitをMSXレジスタR0/R1, R2/R3, R4/R5へミラー
 void psg_emu_set_period(int ch, uint16_t period) {
     if (ch < 0 || ch > 2) return;
+    uint16_t old = psg_ch_period[ch];
+    if (!period) {
+        psg_ch[ch].counter = 0;
+    } else if (old && old != period) {
+        // 位相(periodに対する割合)を保ったまま周期を変える。
+        // これをしないと、より高い音(短いperiod)へ切り替えた瞬間に
+        // 旧位相が新periodを超えて不要なトグル(出力反転)が起き、
+        // ノート切替ごとに「プツ」というクリックが出る。
+        int32_t c = (int32_t)((int64_t)psg_ch[ch].counter * period / old);
+        if (c >= period) c = period - 1;
+        psg_ch[ch].counter = c;
+    }
     psg_ch_period[ch] = period;
     psg_regs[ch * 2] = period & 0xFF;         // fine (12bitミラー)
     psg_regs[ch * 2 + 1] = (period >> 8) & 0x0F; // coarse
@@ -164,12 +171,12 @@ void psg_emu_init() {
     psg_env.hold = false;
 }
 
-// メインtick (約28kHzオーディオタイマーから呼ばれる)
+// メインtick (約56kHzオーディオタイマーから呼ばれる)
 // 3chトーン+ノイズ+エンベロープを処理し、双極性混合値を返す
 // 戻り値: -45..+45 (3ch各±15の双極性混合、DCオフセットなし)
-int8_t psg_emu_tick() {
+int8_t __not_in_flash_func(psg_emu_tick)(void) {
     // --- トーンチャンネル (小数エッジ補間付きDDS) ---
-    // トグル点がtick途中に存在する場合、tick内のHIGH割合 (0-64) を算出して
+    // トグル点がtick途中に存在する場合、tick内のHIGH割合 (0-PSG_TICK_CLOCKS) を算出して
     // エッジを線形補間する → エッジ量子化ノイズ(高音のビットクラッシュ)を低減
     for (int i = 0; i < 3; i++) {
         uint16_t period = psg_ch_period[i];
@@ -216,19 +223,22 @@ int8_t psg_emu_tick() {
     // --- エンベロープ ---
     uint16_t env_period = psg_regs[11] | (psg_regs[12] << 8);
     uint8_t env_shape = psg_regs[13] & 0x0F;
-    bool env_active = (env_period > 0) && (env_shape != 0);
+    bool env_active = (env_period > 0);
     if (env_active && !psg_env.hold) {
         psg_env.counter += PSG_TICK_CLOCKS;
         while (psg_env.counter >= env_period) {
             psg_env.counter -= env_period;
-            psg_env.position = (psg_env.position + 1) & 15;
             psg_env.level = psg_env_calc(env_shape, psg_env.position);
-            // hold判定: continue bit(3)が0で1サイクル完了 → hold
-            if (psg_env.position == 0 && !(env_shape & 0x08)) {
+            uint8_t next = (psg_env.position + 1) & 31;
+            // サイクル終端: alternateは32step(三角波)、それ以外は16step(ノコギリ波)
+            bool cycle_end = (env_shape & 0x02) ? (next == 0) : (next == 16);
+            if (cycle_end && (!(env_shape & 0x08) || (env_shape & 0x01))) {
+                // continueなし or hold → 最終レベルで停止
                 psg_env.hold = true;
-                // hold時の最終レベル
                 psg_env.level = (env_shape & 0x04) ? 15 : 0;
+                break;
             }
+            psg_env.position = next;
         }
     }
 
@@ -250,9 +260,10 @@ int8_t psg_emu_tick() {
                 bool out = (tone_on && psg_ch[i].output) || psg_noise.output;
                 mixed += out ? (int8_t)vol : -(int8_t)vol;
             } else {
-                // トーンのみ: 小数補間付き双極性出力 (gate 0-64 → ±音量)
-                // (vol×(gate-32))>>5: gate=0→-音量, 64→+音量, 32→0
-                mixed += (int8_t)((vol * ((int)psg_ch[i].gate - 32)) >> 5);
+                // トーンのみ: 小数補間付き双極性出力 (gate 0-N → -音量..+音量)
+                // vol×(2×gate-N)/N: gate=0→-音量, N→+音量, N/2→0
+                // (PSG_TICK_CLOCKSに依存しない式: 32→÷32がシフトに最適化される)
+                mixed += (int8_t)(vol * (2 * (int)psg_ch[i].gate - PSG_TICK_CLOCKS) / PSG_TICK_CLOCKS);
             }
         }
         // トーン・ノイズとも無効なch (ミキサーR7でOFF) は0出力

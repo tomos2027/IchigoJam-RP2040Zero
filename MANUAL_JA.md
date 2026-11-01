@@ -261,7 +261,7 @@ SDOFF             … SD終了 (共有ピンがI/Oに復帰)
 | モード | 対象 | 出力方式 |
 |---|---|---|
 | 単声 | `BEEP`、`PLAY "MML"` (1声) | ハードPWMが音程の周波数の方形波を直接生成 (IchigoJam_Pと同等・クリーン) |
-| 多声 | `PLAY "MML","MML","MML"` (2-3声)、`SOUND` | **AY-3-8910 (MSX互換) PSGエミュレーション**で3ch混合出力 (約28kHzサンプリング) |
+| 多声 | `PLAY "MML","MML","MML"` (2-3声)、`SOUND` | **AY-3-8910 (MSX互換) PSGエミュレーション**で3ch混合出力 (約56kHzサンプリング) |
 
 - **`BEEP`は常に単声PWMモードで発音します** (多声再生・SOUND持続音は停止します。BEEPが音声デバイスを占有する、オリジナルIchigoJam準拠の動作)
 - 多声PLAYは**全声の演奏終了で自動的に単声 (PWM) モードへ戻ります**
@@ -407,7 +407,7 @@ cmake --build build
 | CPUクロック | 157.5MHz (NTSC、VREG 1.20V) |
 | 映像 | NTSCコンポジット、32×24文字 |
 | 入力 | USBキーボード (Type-C)、UART、IN1-4/BTN |
-| 音声 | BEEP/PLAY単声 (PWM方形波) + 多声最大3声 (AY-3-8910互換PSGエミュ、約28kHz混合出力) |
+| 音声 | BEEP/PLAY単声 (PWM方形波) + 多声最大3声 (AY-3-8910互換PSGエミュ、約56kHz混合出力) |
 | 保存 | 内蔵25本 + EEPROM 32本 + SD 100本 |
 | SD方式 | GivetakeJam_P準拠の共有ピン方式 (GP6/7/8/10/11) |
 
