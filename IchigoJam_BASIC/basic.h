@@ -3732,6 +3732,8 @@ S_INLINE void command_iot_out() {
 
 S_INLINE void command_ws_out() {
 	//WS.LED port,n[,repeat] ポート選択式 (4K版): port=1-7 (OUT1-6、7=LED/GP15)、n=LED数、色データは[0]〜、repeat=送信回数 (省略時1)
+	// portとnの間のカンマを明示的に消費する (command_out/command_pokeと同じ形式。
+	// 以前はtoken_expression()を連続で呼んでいてWS.LED 7,1のカンマでSyntax errorになった)
 	int port = token_expression();
 	IJB_ERR_CHK();
 	int code = token_getCode();

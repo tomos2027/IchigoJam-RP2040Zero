@@ -29,9 +29,9 @@
 #include "pico/sleep.h"
 #include "hardware/rosc.h"
 
-//NTSCコンポジット出力 (rp2040_pwm_ntsc_textgraph)
+//NTSCコンポジット出力 (独自実装ライブラリ ntscv + 旧API互換shim)
 //※Waveshare RP2040-ZeroはHDMI/DVI出力非対応のため、DVI (PicoDVI) 関連は削除している
-#include "rp2040_pwm_ntsc_textgraph.h"
+#include "ntsc_compat.h"
 
 #include "tusb.h"
 #include "hid.h"

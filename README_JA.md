@@ -118,7 +118,9 @@ cmake --build build
 - Copyright 2014-2026 the IchigoJam authors. All rights reserved. MIT license. https://ichigojam.net/license
 - 4K版拡張 (プログラム領域4096バイト化、拡張配列、`IR.IN`、`ENV.IN`等) は [GivetakeJam_P](https://github.com/Canon-boy4/ichigojam-firm) 準拠 (MIT license)
 - SDカードドライバ (`src/sd_card.h`) は Canon-boy4氏 GivetakeJam_P (rp2350-16130, MIT) の実装をUTF-8対応に改変
-- NTSC出力 (`src/ntsc/`) は KenKen氏 `rp2040_pwm_ntsc_textgraph` による著作物 (営利目的でなければ自由に利用可、利用明記が推奨)
+- NTSC出力 (`src/video/ntscv`) は **独自実装 (MIT、営利利用可)**。公開規格 (NTSC/SMPTE 170M) とpico-sdkを根拠に新規記述したもの。
+  信号生成のPWM+DMA手法の着想は @lovyan03氏、機能互換の参照元として KenKen氏 `rp2040_pwm_ntsc_textgraph` に感謝します (コード流用なし)。
+  仕様書は `docs/ntsc_video_spec.md`、旧API互換層は `src/ntsc/ntsc_compat.h`
 
 ## 商標 / Trademark
 IchigoJamは、株式会社jig.jpの登録商標です (IchigoJam is a registered trademark of jig.jp co., ltd.)

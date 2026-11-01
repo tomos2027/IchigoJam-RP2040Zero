@@ -18,9 +18,12 @@ project(IchigoJam_RP2040Zero)
 pico_sdk_init()
 
 # 本機はNTSCコンポジット出力専用 (HDMI/DVI非対応のためPicoDVI等のDVIライブラリは不要)
+# NTSCドライバは独自実装 (src/video/ntscv、MIT) — 旧ドライバは互換shim経由で利用
 add_executable(IchigoJam_RP2040Zero
 	src/main.c
-	src/ntsc/rp2040_pwm_ntsc_textgraph.c
+	src/video/ntscv_core.c
+	src/video/ntscv_render.c
+	src/video/ntscv_palette.c
 )
 
 # WS.LED (WS2812B) はPIOで波形を生成する (CPUの長時間割込み禁止を避ける)
@@ -34,6 +37,7 @@ target_include_directories(IchigoJam_RP2040Zero PUBLIC
 	# Make sure TinyUSB can find tusb_config.h
 	${CMAKE_CURRENT_LIST_DIR}/src
 	${CMAKE_CURRENT_LIST_DIR}/src/ntsc
+	${CMAKE_CURRENT_LIST_DIR}/src/video
 )
 
 # pico-sdk / pico-extras はリポジトリ直下にcloneして使う (README参照)
@@ -60,3 +64,9 @@ pico_enable_stdio_uart(IchigoJam_RP2040Zero 1)
 
 # create map/bin/hex file etc.
 pico_add_extra_outputs(IchigoJam_RP2040Zero)
+
+# 映像調整用: -DNTSCV_BOOT_TESTPATTERN=1 (SMPTEカラーバー) / =2 (グリッド) で
+# 起動時にNTSCテストパターンを表示する (通常ビルドでは無効)
+if (NTSCV_BOOT_TESTPATTERN)
+    target_compile_definitions(IchigoJam_RP2040Zero PRIVATE NTSCV_BOOT_TESTPATTERN=${NTSCV_BOOT_TESTPATTERN})
+endif()

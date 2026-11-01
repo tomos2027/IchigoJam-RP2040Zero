@@ -111,7 +111,7 @@ bool timer(repeating_timer_t* rt) {
     if (vram != (uint8*)RAM_VRAM) err |= 2;//VRAMポインタ破壊
     if (videomode != VMODE_IJTEXT) err |= 4;//ビデオモード破壊
     if (ntsc_fg.canary1 != 0xC0DE6001 || ntsc_fg.canary2 != 0xC0DE6002) err |= 8;//フォントRAM境界破壊
-    if (ntsc_dma_buf.canary1 != 0xD1A6B001 || ntsc_dma_buf.canary2 != 0xD1A6B002) err |= 16;//DMAバッファ境界破壊
+    if (ntscv_guard_a() != NTSCV_GUARD_A_VALUE || ntscv_guard_b() != NTSCV_GUARD_B_VALUE) err |= 16;//DMAバッファ境界破壊
     if (ntsc_scanline() >= NUM_LINES) err |= 32;//走査線カウンタ破壊
     if (ntsc_mag != 1 && ntsc_mag != 2 && ntsc_mag != 4 && ntsc_mag != 8) err |= 64;//拡大倍率破壊
     //瞬間的な遷移 (フラッシュ書込後のNTSC再初期化中にrp2040_pwm_ntsc_initが設定する

@@ -57,7 +57,7 @@ cmake --build build
 ## License
 - Copyright 2014-2026 the IchigoJam authors. All rights reserved. MIT license. https://ichigojam.net/license
 - SD card driver based on Canon-boy4's GivetakeJam_P (rp2350-16130, MIT license)
-- NTSC output based on KenKen's `rp2040_pwm_ntsc_textgraph` (free for non-commercial use)
+- NTSC output (`src/video/ntscv`) is an **original clean-room implementation (MIT, commercial use OK)**, written from the public NTSC (SMPTE 170M) standard and the pico-sdk only. Credits: PWM+DMA composite generation idea by @lovyan03; functional reference (no code reuse) is KenKen's `rp2040_pwm_ntsc_textgraph`. See `docs/ntsc_video_spec.md` and the legacy API shim `src/ntsc/ntsc_compat.h`
 
 ## Trademark
 - IchigoJam is a registered trademark of jig.jp co., ltd.
