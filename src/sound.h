@@ -41,6 +41,12 @@ static void psg_audio_core1_entry(void) {
 void sound_init() {
     _g.psgratio = 1;
     gpio_set_function(SOUND_PIN, GPIO_FUNC_PWM);
+    // 音声出力パッドを最大駆動(12mA)+高速スルーレートに設定する (既定は4mA)。
+    // 低インピーダンス負荷をわずかにドライブしやすくするためのもの。
+    // 圧電ブザー直結はこれでも実用音量にならない (アンプ/ドライバ経由が必須、MANUAL §7.5)。
+    // パッド設定はGPIO/PWMどちらの機能でも有効 (pwm_set_gpio_level等では消えない)
+    gpio_set_drive_strength(SOUND_PIN, GPIO_DRIVE_STRENGTH_12MA);
+    gpio_set_slew_rate(SOUND_PIN, GPIO_SLEW_RATE_FAST);
     slice_num = pwm_gpio_to_slice_num(SOUND_PIN);
     pwm_set_clkdiv(slice_num, PWM_CLKDIV_MHZ()); // 1MHzカウンタ (PWMトーンモード)
     pwm_set_wrap(slice_num, 0);
@@ -135,6 +141,9 @@ void set_tone() {
 
 //クロックを変更したときにPWMの分周比を再設定する
 void sound_reconfig() {
+    // スリープ復帰/クロック変更後に音声出力パッド設定を再適用
+    gpio_set_drive_strength(SOUND_PIN, GPIO_DRIVE_STRENGTH_12MA);
+    gpio_set_slew_rate(SOUND_PIN, GPIO_SLEW_RATE_FAST);
     if (sound_multi_mode) {
         pwm_set_clkdiv(slice_num, 1); // デューティモード: キャリア = sysclk/1024
     } else {
