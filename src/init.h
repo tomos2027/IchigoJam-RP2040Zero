@@ -157,7 +157,7 @@ bool timer(repeating_timer_t* rt) {
      } else {
         vram_to_tvram_all(_g.cursorflg);
         //ハートビート: 内蔵WS2812 (GP16) を約1Hzで緑点滅 (システム生存確認)
-        //LEDコマンドはGP15を制御 (GP16とは独立)
+        //LEDコマンドはGP2を制御 (GP16とは独立)
         static bool heartbeat = true;
         if ((frames & 31) == 0) {
             heartbeat = !heartbeat;
@@ -229,7 +229,7 @@ void pico_init() {
     gpio_pull_up(UART_RX_PIN);
 
     //ハートビートはtimer()で開始されるため、ここでは点灯しない
-    //LEDコマンドはGP15 (io.h) を制御、GP16はハートビート専用
+    //LEDコマンドはGP2 (io.h) を制御、GP16はハートビート専用
 
     // init host stack on configured roothub port
     tuh_init(BOARD_TUH_RHPORT);

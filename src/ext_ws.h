@@ -102,16 +102,17 @@ static void __noinline __not_in_flash_func(ws_bitbang_out) (uint8 pin, int nled,
 }
 
 //WS.LED port,n[,repeat] (4K版: ポート選択式+拡張配列変数対応)
-//port: 1-7 (OUT1-6、7=LED/GP15=外部WS2812)、n: LED数、repeat: 送信回数
+//port: 1-6 (OUT1-6)、7=外部WS2812 (GP15)、8=LED (GP2)、n: LED数、repeat: 送信回数
 //色データは配列変数[0]〜[n*3-1]から読み込む (1LEDにつき3変数、[102]-[357]の拡張領域に対応し最大119LED)
 static void __noinline ws_out(int port, int nled, int repeat) {
-    if (port < 1 || port > 7 || nled < 1 || repeat < 1) {
+    if (port < 1 || port > 8 || nled < 1 || repeat < 1) {
         return;
     }
     if (nled * 3 > IJB_SIZEOF_ARRAY_MAX) { //配列変数の範囲内に収める (最大119LED)
         nled = IJB_SIZEOF_ARRAY_MAX / 3;
     }
-    uint8 pin = out_pins[port - 1];
+    // 7=外部WS2812(GP15)、8=LED(GP2)、1-6=OUT1-6
+    uint8 pin = (port == 7) ? WS2812_PIN : ((port == 8) ? LED : out_pins[port - 1]);
     if (sd_pin_reserved(pin)) {
         return;//SD動作中の共有ピン (OUT1/3/4) はWS2812出力禁止
     }
@@ -138,7 +139,7 @@ static void __noinline ws_out(int port, int nled, int repeat) {
 }
 
 //===== 基板内蔵WS2812 (GP16) — ハートビート/診断表示専用 =====
-//LEDコマンドはGP15を制御 (io.h)、WS.LED 7もGP15から出力する
+//LEDコマンド/OUT7はGP2を制御 (io.h)。WS.LED 7はGP15(外部WS2812)、WS.LED 8はGP2から出力する
 //GP16は本関数 (led_builtin) のみから制御される: timer()のハートビート、エラー時の高速点滅
 
 static uint8 led_builtin_pin = 16;// 基板内蔵WS2812 (GP16に固定)

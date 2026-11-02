@@ -7,7 +7,8 @@
 //裏面パッド: GP17-25 (本機では未使用)
 //GP6/7/8/10/11はSDカード (SPI1) と共有 (SDON中はOUT/PWM/WS.LED/IR.INがブロックされる)
 //GP16は基板内蔵WS2812 (ハートビート/診断専用、ext_ws.hのled_builtinで駆動)
-#define LED 15  // 側面パッド (LEDコマンド/WS.LED 7で使用、通常GPIO)
+#define LED 2   // 側面パッド (LEDコマンド/OUT7/WS.LED 8で使用、通常GPIO)
+#define WS2812_PIN 15 // 側面パッド (WS.LED 7の外部WS2812データ出力)
 #define BTN 28  // 側面パッド (ADC2)  GNDとの間にボタンを接続 (内部プルアップ)
 #define IN1 27  // 側面パッド (ADC1)
 #define IN2 26  // 側面パッド (ADC0)
@@ -35,7 +36,7 @@
 #define PWM_WRAP 19999 // 1MHz / 50Hz - 1
 
 void sound_reconfig();//sound.hで定義 (io.hより後ろにincludeされるため前方宣言)
-void led_builtin(bool on);//ext_ws.hで定義 (基板内蔵WS2812=GP16をハートビート/診断表示に使う、LEDコマンドはGP15)
+void led_builtin(bool on);//ext_ws.hで定義 (基板内蔵WS2812=GP16をハートビート/診断表示に使う、LEDコマンドはGP2)
 
 static uint8 in_pins[] = { IN1, IN2, IN3, IN4, OUT1, OUT2, OUT3, OUT4, BTN, OUT5, OUT6 };
 static uint8 out_pins[] = { OUT1, OUT2, OUT3, OUT4, OUT5, OUT6, LED, IN1, IN2, IN3, IN4 };
@@ -104,7 +105,7 @@ void io_init() {
     for (int i = 1; i <= 6; i++) {
         IJB_out(i, 0);//IJB_out内でsd_pin_reservedチェック
     }
-    //LED (GP15) は通常GPIO出力として初期化 (LOW=消灯)
+    //LED (GP2) は通常GPIO出力として初期化 (LOW=消灯)
     gpio_init(LED);
     gpio_set_dir(LED, GPIO_OUT);
     gpio_put(LED, 0);
