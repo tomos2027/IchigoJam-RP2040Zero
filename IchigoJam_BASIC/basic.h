@@ -389,6 +389,9 @@ S_INLINE void command_beep(); // S_INLINEで4増
 S_INLINE void command_tempo();
 S_INLINE void command_sound_psg(); // MSX PSG レジスタ直接操作 (SOUND reg,val)
 S_INLINE void command_video();
+S_INLINE void command_color(); // COLOR/COL f[,b[,c]] (NTSCカラー)
+S_INLINE void command_pal();   // PAL n,v / PAL RESET
+S_INLINE void command_attr();  // ATTR x,y,a
 S_INLINE void command_scroll();
 S_INLINE void command_clp();
 S_INLINE void command_poke();
@@ -600,6 +603,11 @@ int basic_execute(char* commandline) {
 			//68
 			case TOKEN_SCROLL:	command_scroll();						break;
 			case TOKEN_VIDEO:	command_video();						break;
+			// COLはCOLORと同じ引数・同じ処理
+			case TOKEN_COL:
+			case TOKEN_COLOR:	command_color();						break;
+			case TOKEN_PAL:		command_pal();							break;
+			case TOKEN_ATTR:	command_attr();							break;
 			//76
 
 			case TOKEN_BPS:		command_bps();							break;
@@ -1428,6 +1436,33 @@ static int16 token_expression5() {
 			if (t.code == TOKEN_COS)
 				v += 90;
 			return sin360(v);
+		}
+		case TOKEN_PAL_FN: { // PAL(n) 色番号nのRGB332値を取得
+			int16 color = token_expression();
+			IJB_ERR_CHK1(0);
+			Token_get(t);
+			if (t.code != TOKEN_PAREN_E) {
+				command_error(ERR_SYNTAX_ERROR);
+				break;
+			}
+			return screen_get_palette(color);
+		}
+		case TOKEN_ATTR_FN: { // ATTR(x,y) 座標x,yの色属性を取得
+			int16 x = token_expression();
+			IJB_ERR_CHK1(0);
+			Token_get(t);
+			if (t.code != TOKEN_COMMA) {
+				command_error(ERR_SYNTAX_ERROR);
+				break;
+			}
+			int16 y = token_expression();
+			IJB_ERR_CHK1(0);
+			Token_get(t);
+			if (t.code != TOKEN_PAREN_E) {
+				command_error(ERR_SYNTAX_ERROR);
+				break;
+			}
+			return screen_get_attr(x, y);
 		}
 		/*
 		case TOKEN_COS: {
@@ -3287,7 +3322,20 @@ S_INLINE void command_video() {
 		VIDEO 2 - invert
 		VIDEO 3 - big
 		VIDEO 4 - big invert
+		VIDEO 9 - 32x24 カラー (COLOR/PAL/ATTR)
+		VIDEO 10 - 42x27 カラー
 		*/
+		if (video == 9 || video == 10) {
+			_g.screen_big = 0;
+			_g.screen_invert = 0;
+			ntsc_restart_mode(video == 9 ? NTSCV_MODE_IJ_COLOR : NTSCV_MODE_COLOR_TEXT);
+			screen_clear();
+			return;
+		}
+		// カラーモードから戻る場合は起動時と同じ経路でIJTEXTへフル再初期化
+		if (ntscv_mode != NTSCV_MODE_IJ_TEXT) {
+			ntsc_restart_mode(NTSCV_MODE_IJ_TEXT);
+		}
 		if (video < 0)
 			video = 0;
 		_g.screen_invert = (video & 1) == 0; // VIDEO2, 4 -> invert
@@ -3305,6 +3353,79 @@ S_INLINE void command_video() {
 	} else {
 		video_off(clkdiv);
 	}
+}
+// ===== NTSCカラー (COLOR/COL/PAL/ATTR) =====
+// COLOR f[,b[,c]] / COL: 以降に書く文字の色。f,b,c=0..15。省略=-1(不変)。c=周辺色(予約)。
+S_INLINE void command_color() {
+	int16 color[3];
+	int i;
+	color[0] = token_expression();
+	IJB_ERR_CHK();
+	color[1] = -1;
+	color[2] = -1;
+	for (i = 1; i < 3; i++) {
+		int code = token_getCode();
+		if (code != TOKEN_COMMA)
+			break;
+		color[i] = token_expression();
+		IJB_ERR_CHK();
+	}
+	token_end();
+	if (color[0] < 0 || color[0] > 15 || color[1] > 15 || color[2] > 15) {
+		command_error(ERR_INDEX_OUT_OF_RANGE);
+		return;
+	}
+	screen_set_color(color[0], color[1], color[2]);
+}
+// PAL n,v / PAL RESET : 色番号n(0..15)のRGB332値v(0..255)を設定/既定へ戻す
+S_INLINE void command_pal() {
+	int code = token_getCode();
+	if (code == TOKEN_RESET) {
+		token_end();
+		screen_reset_palette();
+		return;
+	}
+	token_back();
+	int16 color = token_expression();
+	IJB_ERR_CHK();
+	code = token_getCode();
+	if (code != TOKEN_COMMA) {
+		command_error(ERR_SYNTAX_ERROR);
+		return;
+	}
+	int16 value = token_expression();
+	IJB_ERR_CHK();
+	token_end();
+	if (color < 0 || color > 15 || value < 0 || value > 255) {
+		command_error(ERR_INDEX_OUT_OF_RANGE);
+		return;
+	}
+	screen_set_palette(color, value);
+}
+// ATTR x,y,a : 既存セルの色属性 a=前景+背景*16 を設定
+S_INLINE void command_attr() {
+	int16 x = token_expression();
+	IJB_ERR_CHK();
+	int code = token_getCode();
+	if (code != TOKEN_COMMA) {
+		command_error(ERR_SYNTAX_ERROR);
+		return;
+	}
+	int16 y = token_expression();
+	IJB_ERR_CHK();
+	code = token_getCode();
+	if (code != TOKEN_COMMA) {
+		command_error(ERR_SYNTAX_ERROR);
+		return;
+	}
+	int16 attr = token_expression();
+	IJB_ERR_CHK();
+	token_end();
+	if (x < 0 || x >= SCREEN_W || y < 0 || y >= SCREEN_H || attr < 0 || attr > 255) {
+		command_error(ERR_INDEX_OUT_OF_RANGE);
+		return;
+	}
+	screen_set_attr(x, y, attr);
 }
 S_INLINE void command_scroll() {
 	int16 dir = token_expression();

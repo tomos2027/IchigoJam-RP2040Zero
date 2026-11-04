@@ -7,6 +7,7 @@ A port of IchigoJam BASIC 1.6.1 (4K version) for the **Waveshare RP2040-Zero** b
 - Video: NTSC composite (GP3 + 75Ω + 560pF external circuit)
 - Keyboard: USB keyboard on the Type-C port (native USB host)
 - **Multi-voice PLAY (up to 3 voices)** via AY-3-8910 (MSX-compatible) PSG emulation, with per-voice `V0-15` volume and `SOUND reg,val` register access (single-voice BEEP/PLAY stays clean hardware PWM)
+- **NTSC color text**: `VIDEO 9` (32×24) / `VIDEO 10` (42×27) color modes with MSX-style 16-color `COLOR f[,b[,c]]` / `COL f[,b[,c]]`, `ATTR x,y,a`, and `PAL n,v` / `PAL(n)` / `PAL RESET`
 - SD card: [GivetakeJam_P](https://github.com/Canon-boy4/ichigojam-firm/tree/rp2350-16130) shared-pin design (GP6/7/8/10/11)
 - **LED / `WS.LED 8,n` on GP2** (WS2812) and **`WS.LED 7,n` on GP15** (external LED strip); the onboard WS2812 (GP16) is used for the heartbeat and error diagnostics only
 - **No back-pad pins (GP17-25) are used** — all functions on side edge pads

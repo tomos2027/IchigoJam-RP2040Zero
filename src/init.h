@@ -43,6 +43,43 @@ void vram_to_tvram_all(bool visible_cursor) {
         cursor_pos = _g.cursory * SCREEN_W + _g.cursorx;
     }
 
+    // ===== カラーモード (COLOR) =====
+    // セル属性 = 下位4bit前景 / 上位4bit背景。反転・カーソルは前景と背景を入れ替えて表現する。
+    if (ntscv_mode == NTSCV_MODE_IJ_COLOR) {
+        // 32x24 IJTEXTレイアウト + カラー属性
+        ntsc_mag = 1;
+        for (int y = 0; y < SCREEN_H; y++) {
+            for (int x = 0; x < SCREEN_W; x++) {
+                int idx = y * SCREEN_W + x;
+                uint8 a = screen_attr[idx];
+                if (_g.screen_invert || idx == cursor_pos)
+                    a = (uint8)(((a & 0x0F) << 4) | ((a >> 4) & 0x0F));
+                TVRAM[idx] = vram[idx];
+                TVRAM[IJ_ATTROFFSET + idx] = a;
+            }
+        }
+        return;
+    }
+    if (ntscv_mode == NTSCV_MODE_COLOR_TEXT) {
+        // 42x27グリッド。32x24のテキストを左上に配置し、残りは背景色0。
+        // 未使用領域 (32列以降/24行以降) はモード切替時のclearscreen()でゼロ化済みなので
+        // 毎フレーム書かない。毎フレームの全クリアは優先度0のDMA合成IRQに割り込まれ、
+        // 半分クリア (黒) のチャンクが表示されて黒線が画面をスクロールする原因になるため廃止。
+        ntsc_mag = 1;
+        for (int y = 0; y < SCREEN_H; y++) {
+            for (int x = 0; x < SCREEN_W; x++) {
+                int idx = y * SCREEN_W + x;
+                uint8 a = screen_attr[idx];
+                if (_g.screen_invert || idx == cursor_pos)
+                    a = (uint8)(((a & 0x0F) << 4) | ((a >> 4) & 0x0F));
+                TVRAM[y * WIDTH_X + x] = vram[idx];
+                TVRAM[ATTROFFSET + y * WIDTH_X + x] = a;
+            }
+        }
+        return;
+    }
+
+    // ===== 単色 IJTEXT (従来) =====
     uint8 attr = _g.screen_invert ? IJ_ATTR_INVERT : 0;
     int mag = 1 << _g.screen_big;
     ntsc_mag = mag;//NTSC描画側に拡大倍率を伝える (複製セルを拡大グリフの断片として描画する)
@@ -70,6 +107,7 @@ void ntsc_init() {
     memcpy(ntsc_fontram, CHAR_PATTERN, 256 * 8);
     Fontp = ntsc_fontram;
     rp2040_pwm_ntsc_init(NTSC_PIN);
+    screen_reset_palette();//COLOR用16色パレット (MSX風RGB332) をntscvへ反映
     ntsc_set_line_callback(ntsc_line_callback);
     //IJTEXTモードへ直接設定する (set_videomodeだとstop/start_compositeが走り同期が乱れるため)
     videomode = VMODE_IJTEXT;
@@ -105,11 +143,24 @@ bool timer(repeating_timer_t* rt) {
     watchdog_update();//ウォッチドッグをfeedする (core0が固まったら自動再起動)
     psg_tick();
     set_tone();
+#ifdef NTSCV_BOOT_TESTPATTERN
+    //テストパターンは約10秒表示した後BASICへ降りる
+    //(カラー信号の面積スケール確認→VIDEO9/10でのテキスト診断を連続して行うため)
+    {
+        static bool tp_cleared;
+        if (!tp_cleared && frames > 600) {
+            tp_cleared = true;
+            ntscv_test_pattern(0);
+        }
+    }
+#endif
     //NTSC整合性チェック (診断用): メモリ破壊を検知したらエラー番号を画面に表示し、以降の通常画面更新を止める
     uint32_t err = 0;
     if (Fontp != ntsc_fontram) err |= 1;//フォントポインタ破壊
     if (vram != (uint8*)RAM_VRAM) err |= 2;//VRAMポインタ破壊
-    if (videomode != VMODE_IJTEXT) err |= 4;//ビデオモード破壊
+    if (videomode != VMODE_IJTEXT &&
+        videomode != NTSCV_MODE_IJ_COLOR &&
+        videomode != NTSCV_MODE_COLOR_TEXT) err |= 4;//ビデオモード破壊 (カラー2モードは正当)
     if (ntsc_fg.canary1 != 0xC0DE6001 || ntsc_fg.canary2 != 0xC0DE6002) err |= 8;//フォントRAM境界破壊
     if (ntscv_guard_a() != NTSCV_GUARD_A_VALUE || ntscv_guard_b() != NTSCV_GUARD_B_VALUE) err |= 16;//DMAバッファ境界破壊
     if (ntsc_scanline() >= NUM_LINES) err |= 32;//走査線カウンタ破壊
@@ -148,6 +199,11 @@ bool timer(repeating_timer_t* rt) {
         *p++ = '0' + f / 100;
         *p++ = '0' + (f / 10) % 10;
         *p++ = '0' + f % 10;
+        //カラーモードでもE番号が見えるよう、先頭8セルの属性を白(前景15/背景0)にする
+        for (int i = 0; i < 8; i++) {
+            TVRAM[IJ_ATTROFFSET + i] = 0x0F;
+            TVRAM[ATTROFFSET + i] = 0x0F;
+        }
         //エラー時は内蔵WS2812を高速点滅させて知らせる
         static bool diag_led;
         if ((frames & 7) == 0) {
@@ -156,6 +212,23 @@ bool timer(repeating_timer_t* rt) {
         }
      } else {
         vram_to_tvram_all(_g.cursorflg);
+#ifdef NTSCV_MERGE_DEBUG
+        //診断: DMA合成の割込み合流回数 (ntscv_core.cのmerge_events) を画面右上に
+        //16進4桁でTVRAMへ直接表示する。増え続ける=合成が1チャンク (127µs) に間に合っていない。
+        //VIDEO10は未使用領域 (0行38-41列)、VIDEO1/9は0行28-31列に重畳する。
+        {
+            uint16_t ev = ntscv_debug_events();
+            uint8_t ox = (ntscv_mode == NTSCV_MODE_COLOR_TEXT) ? 38 : 28;
+            for (int i = 0; i < 4; i++) {
+                uint8_t nib = (uint8)((ev >> (12 - 4 * i)) & 15);
+                TVRAM[ox + i] = (uint8)(nib < 10 ? '0' + nib : 'A' + nib - 10);
+                if (ntscv_mode == NTSCV_MODE_COLOR_TEXT)
+                    TVRAM[ATTROFFSET + ox + i] = 0x0F;//白/黒 (下位=前景15, 上位=背景0)
+                else
+                    TVRAM[IJ_ATTROFFSET + ox + i] = 0;//単色モード: 通常表示
+            }
+        }
+#endif
         //ハートビート: 内蔵WS2812 (GP16) を約1Hzで緑点滅 (システム生存確認)
         //LEDコマンドはGP2を制御 (GP16とは独立)
         static bool heartbeat = true;

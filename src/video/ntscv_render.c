@@ -88,8 +88,12 @@ static inline void __not_in_flash_func(fill_samples)(uint16_t *dst, int n, uint1
 
 /* ライン先頭の同期+ポーチ類 (計172サンプル) を全書き込みする。
    with_burst=true なら規格どおりブリーズウェイ8サンプル後に
-   9周期のカラーバーストを置く (カラーモードとテストパターン1で使用)。 */
-static void __not_in_flash_func(emit_head)(uint16_t *dst, bool with_burst)
+   9周期のカラーバーストを置く (カラーモードとテストパターン1で使用)。
+   po: このラインの副搬送波位相オフセット (0 または 2)。
+   1走査線=910サンプル=227.5周期のため、ラインの先頭サンプルの位相は
+   隣接ラインで180°交互 (po = (ライン番号&1)*2)。バーストもこれに追従し、
+   実NTSCと同じライン構造にする (TVのY/C分離=コムフィルタと整合)。 */
+static void __not_in_flash_func(emit_head)(uint16_t *dst, bool with_burst, int po)
 {
     fill_samples(dst, NTSCV_H_SYNC_SAMPLES, NTSCV_LEVEL_SYNC);
     if (!with_burst) {
@@ -100,9 +104,16 @@ static void __not_in_flash_func(emit_head)(uint16_t *dst, bool with_burst)
     }
     fill_samples(dst + NTSCV_H_SYNC_SAMPLES, NTSCV_BREEZEWAY_SAMPLES, NTSCV_LEVEL_BLACK);
     uint32_t *p = (uint32_t *)(dst + NTSCV_H_SYNC_SAMPLES + NTSCV_BREEZEWAY_SAMPLES);
-    for (int c = 0; c < NTSCV_BURST_CYCLES; c++) {
-        *p++ = NTSCV_BURST_PAIR01;
-        *p++ = NTSCV_BURST_PAIR23;
+    if (po == 0) {
+        for (int c = 0; c < NTSCV_BURST_CYCLES; c++) {
+            *p++ = NTSCV_BURST_PAIR01; /* 位相0-1 */
+            *p++ = NTSCV_BURST_PAIR23; /* 位相2-3 */
+        }
+    } else {
+        for (int c = 0; c < NTSCV_BURST_CYCLES; c++) {
+            *p++ = NTSCV_BURST_PAIR23; /* 位相2-3 (po=2で180°交互) */
+            *p++ = NTSCV_BURST_PAIR01; /* 位相0-1 */
+        }
     }
     fill_samples(dst + NTSCV_H_SYNC_SAMPLES + NTSCV_BREEZEWAY_SAMPLES
                      + NTSCV_BURST_CYCLES * 4,
@@ -137,6 +148,7 @@ void ntscv_render_boot_init(void)
         uint8_t width = (uint8_t)((21 * (j + 1) >> 3) - (21 * j >> 3));
         if (width == 3) ij_extra_mask |= (uint8_t)(0x80 >> j);
     }
+    ntscv_render_palette_changed(); /* IJカラー描画表 (パレット変更時も再構築される) */
 }
 
 /* w: 有効画素域の先頭 (サンプル172)。l: 有効映像内の走査線 0..215 */
@@ -192,25 +204,156 @@ static void __not_in_flash_func(render_ij)(uint16_t *w, int l)
     }
 }
 
+/*---- IJTEXTカラー: 32×24、セル属性 (下位4bit=前景, 上位4bit=背景) ----
+  DMA合成IRQは1チャンク (2走査線) を127µs以内に処理する必要がある (持続レート)。
+  毎サンプルのパレット参照/位相演算はこの予算を超過し、割込み合流で画面が
+  破綻するため、出力値を起動時/パレット変更時に事前計算した表引きのみにする。
+  幾何は単色IJTEXTと完全同一 (1文字21サンプル、ドット幅2,3,2,3,3,2,3,3、
+  文字位置 i の開始位相 = (21i + po) %4 = (i + po) %4)。
+  色は「白レベル輝度+セル単位ティント」:
+   - 輝度: 前景ドット=白(9) / 背景ドット=黒(2)。VIDEO1と同一の輝度構造なので
+     現代TVのノイズリダクションによる中間輝度のドット欠けが起きない
+     (実機確認: 色本来の輝度3〜8ではドットが欠ける)。
+   - 色差: セル全体 (前景+背景ドット) に前景色の色差を一定に載せる。
+     隣接走査線で色差が相関するためTVの2ラインコムフィルタが抽出できる
+     (ドット単位の色差は走査線間で非相関のため抽出されない — 実機確認:
+     走査線一定のカラーバーは見えるがドット単位の色は見えない)。*/
+
+/* [前景/背景][色][開始位相][サンプル0..20] (+1パディングで先頭4バイト整列)。
+   前景 = 白レベル9+色差1/3 (文字はほぼ白)、背景 = 黒レベル2+フル色差 (セルの色)。
+   セル全体 (前景ドット+背景ドット) に同一の色差パターンを載せることで、隣接
+   走査線で色差が相関し、TVの2ラインコムフィルタが色を抽出できる。
+   ドット単位の色差 (フォントビットで色差の位置が走査線ごとに変わる) は
+   走査線間で非相関のためコムフィルタで抽出されず色が見えない (実機確認済み:
+   走査線一定のカラーバーは見えるがドット単位の色差は見えない)。 */
+static uint16_t ij_color_run[2][16][4][22] __attribute__((aligned(4)));
+
+/* 有彩色か (生レベルに色差があるか) とセルのティント色選択表 */
+static uint8_t ij_color_chromatic[16];
+static uint8_t ij_color_tint_sel[256];
+
+/* パレット変更 (PALコマンド/初期化) を描画表へ反映する */
+void __not_in_flash_func(ntscv_render_palette_changed)(void)
+{
+    for (int c = 0; c < 16; c++) {
+        uint16_t s[4];
+        /* ティントの色差は視認性ルール無しの生パレットから取る
+           (ルール2のドット平均保護は白レベル輝度方式では不要で、
+            適用すると色差が弱くなるため) */
+        s[0] = (uint16_t)ntscv_palette_plain[c][0];
+        s[1] = (uint16_t)(ntscv_palette_plain[c][0] >> 16);
+        s[2] = (uint16_t)ntscv_palette_plain[c][1];
+        s[3] = (uint16_t)(ntscv_palette_plain[c][1] >> 16);
+        int32_t sum = s[0] + s[1] + s[2] + s[3];
+        int32_t mx = s[0], mn = s[0];
+        for (int k = 1; k < 4; k++) {
+            if (s[k] > mx) mx = s[k];
+            if (s[k] < mn) mn = s[k];
+        }
+        int32_t cvec[4];
+        if (mx != mn) { /* 有彩色: 色差ベクトル (生レベル - 平均) */
+            ij_color_chromatic[c] = 1;
+            int32_t mean = (sum + 2) >> 2;
+            for (int k = 0; k < 4; k++) cvec[k] = (int32_t)s[k] - mean;
+        } else { /* 無彩色 (黒/白/灰): 色差なし */
+            ij_color_chromatic[c] = 0;
+            for (int k = 0; k < 4; k++) cvec[k] = 0;
+        }
+        for (int po = 0; po < 4; po++) {
+            for (int k = 0; k < NTSCV_IJ_COLOR_CHAR_SAMPLES; k++) {
+                int32_t ck = cvec[(po + k) & 3];
+                /* 前景: 白レベル+色差1/3。フル振幅の色差を前景ドットに載せると
+                   サンプル値が9±3で揺れ、Y/C分離の漏れで文字の中に明暗の縞
+                   (色のむら) が出て読みづらい (実機確認)。1/3に減衰して
+                   文字はほぼ白にし、色はセル背景側に強く出す */
+                int32_t vf = NTSCV_LEVEL_WHITE + ck / 3;
+                int32_t vb = NTSCV_LEVEL_BLACK + ck; /* 背景: 黒レベル+フル色差 */
+                if (vf < 0) vf = 0;
+                if (vf > 10) vf = 10;
+                if (vb < 1) vb = 1; /* レベル0 (同期レベル) は避ける */
+                if (vb > 10) vb = 10;
+                ij_color_run[0][c][po][k] = (uint16_t)vf;
+                ij_color_run[1][c][po][k] = (uint16_t)vb;
+            }
+        }
+    }
+    /* ティント色の選択表: 前景が有彩色なら前景色、無彩色なら背景色
+       (COLOR 15,4 のような背景色指定でも色が出るように) */
+    for (int a = 0; a < 256; a++) {
+        uint8_t fg = (uint8_t)(a & 15), bg = (uint8_t)((a >> 4) & 15);
+        ij_color_tint_sel[a] = ij_color_chromatic[fg] ? fg : bg;
+    }
+}
+
+static void __not_in_flash_func(render_ij_color)(uint16_t *w, int l, int po)
+{
+    int row = ij_row_of_line[l];
+    int tl = l - row * NTSCV_IJ_LINES_PER_ROW;
+    int fontline = (tl < 8) ? tl : 7; /* 9走査線 → 8ラインフォント (zoom=1固定) */
+    const uint8_t *code = ntscv_vram_codes + row * NTSCV_IJ_COLS;
+    const uint8_t *attr = ntscv_vram_attrs + row * NTSCV_IJ_COLS;
+    for (int i = 0; i < NTSCV_IJ_COLS; i++) {
+        uint8_t a = attr[i];
+        int pi = (po + i) & 3; /* 文字位置+ライン位相 → 開始位相 (21≡1 mod 4) */
+        /* セルのティント色 (前景が有彩色なら前景色、無彩色なら背景色) の
+           前景バリアント (白レベル+色差) と背景バリアント (黒レベル+同じ色差) */
+        uint8_t tc = ij_color_tint_sel[a];
+        const uint16_t *fg = ij_color_run[0][tc][pi];
+        const uint16_t *bg = ij_color_run[1][tc][pi];
+        if (((a >> 4) & 15) == (a & 15)) bg = fg; /* 前景=背景: 一様なセル */
+        uint8_t bits = ntscv_font[code[i] * 8 + fontline];
+        if (bits == 0 || fg == bg) {
+            /* 全ドット同色 (空白セルが大半): 表から一括複製する。
+               出力位置が32bit整列のときは32bit転送を使う */
+            if (((uintptr_t)w & 2) == 0) {
+                const uint32_t *src = (const uint32_t *)bg; /* 表先頭は4バイト整列 */
+                uint32_t *d = (uint32_t *)w;
+                d[0] = src[0]; d[1] = src[1]; d[2] = src[2]; d[3] = src[3];
+                d[4] = src[4]; d[5] = src[5]; d[6] = src[6]; d[7] = src[7];
+                d[8] = src[8]; d[9] = src[9];
+                w[20] = bg[20];
+            } else {
+                for (int k = 0; k < NTSCV_IJ_COLOR_CHAR_SAMPLES; k++) w[k] = bg[k];
+            }
+            w += NTSCV_IJ_COLOR_CHAR_SAMPLES;
+            continue;
+        }
+        /* ドット幅 2,3,2,3,3,2,3,3 → サンプル位置は定数 (表引き+ストアのみ) */
+        const uint16_t *p;
+        p = (bits & 0x80) ? fg : bg; w[0] = p[0]; w[1] = p[1];
+        p = (bits & 0x40) ? fg : bg; w[2] = p[2]; w[3] = p[3]; w[4] = p[4];
+        p = (bits & 0x20) ? fg : bg; w[5] = p[5]; w[6] = p[6];
+        p = (bits & 0x10) ? fg : bg; w[7] = p[7]; w[8] = p[8]; w[9] = p[9];
+        p = (bits & 0x08) ? fg : bg; w[10] = p[10]; w[11] = p[11]; w[12] = p[12];
+        p = (bits & 0x04) ? fg : bg; w[13] = p[13]; w[14] = p[14];
+        p = (bits & 0x02) ? fg : bg; w[15] = p[15]; w[16] = p[16]; w[17] = p[17];
+        p = (bits & 0x01) ? fg : bg; w[18] = p[18]; w[19] = p[19]; w[20] = p[20];
+        w += NTSCV_IJ_COLOR_CHAR_SAMPLES;
+    }
+}
+
 /*---- カラーテキスト: 42×27、1ドット2サンプル (仕様書§3.2) ----
   1文字16サンプル = 搬送波4周期。ドットごとに位相が180°進行するため
   偶数ドット=パレット位相0-1、奇数ドット=位相2-3 を使う。
+  po (ライン位相オフセット 0/2) が2のラインでは偶数ドット=位相2-3となり
+  ペアの選択を入れ替える (実NTSCのライン毎180°交互に追従)。
 */
-static void __not_in_flash_func(render_color_text)(uint16_t *w, int l)
+static void __not_in_flash_func(render_color_text)(uint16_t *w, int l, int po)
 {
     int row = l >> 3;
     int fline = l & 7;
     const uint8_t *code = ntscv_vram_codes + row * NTSCV_COLOR_COLS;
     const uint8_t *attr = ntscv_vram_attrs + row * NTSCV_COLOR_COLS;
-    uint32_t bg01 = ntscv_palette[256][0];
-    uint32_t bg23 = ntscv_palette[256][1];
+    int wsel = po >> 1; /* 偶数ドットが使う32bitペアの番号 (0/1) */
     uint32_t *w32 = (uint32_t *)w;
     for (int i = 0; i < NTSCV_COLOR_COLS; i++) {
         uint8_t bits = ntscv_font[code[i] * 8 + fline];
-        const uint32_t *fg = ntscv_palette[attr[i]];
+        uint8_t a = attr[i];
+        const uint32_t *fg = ntscv_palette[a & 15];
+        const uint32_t *bg = ntscv_palette[(a >> 4) & 15];
         for (int j = 0; j < 4; j++) {
-            *w32++ = (bits & 0x80) ? fg[0] : bg01;
-            *w32++ = (bits & 0x40) ? fg[1] : bg23;
+            *w32++ = (bits & 0x80) ? fg[wsel] : bg[wsel];
+            *w32++ = (bits & 0x40) ? fg[wsel ^ 1] : bg[wsel ^ 1];
             bits <<= 2;
         }
     }
@@ -219,10 +362,10 @@ static void __not_in_flash_func(render_color_text)(uint16_t *w, int l)
 /*---- カラーグラフィック+テキスト: 336×216に42×27文字を重ねる (仕様書§3.3) ----
   GVRAMは1画素1バイトのパレット番号。フォントビットが立っている画素は文字色優先。
 */
-static void __not_in_flash_func(render_color_graph)(uint16_t *w, int l)
+static void __not_in_flash_func(render_color_graph)(uint16_t *w, int l, int po)
 {
     if (!ntscv_vram_graph) {
-        render_color_text(w, l); /* グラフィックVRAM未登録ならテキストのみ */
+        render_color_text(w, l, po); /* グラフィックVRAM未登録ならテキストのみ */
         return;
     }
     int row = l >> 3;
@@ -230,14 +373,15 @@ static void __not_in_flash_func(render_color_graph)(uint16_t *w, int l)
     const uint8_t *code = ntscv_vram_codes + row * NTSCV_COLOR_COLS;
     const uint8_t *attr = ntscv_vram_attrs + row * NTSCV_COLOR_COLS;
     const uint8_t *gline = ntscv_vram_graph + l * NTSCV_GRAPH_COLS;
+    int wsel = po >> 1;
     uint32_t *w32 = (uint32_t *)w;
     for (int i = 0; i < NTSCV_COLOR_COLS; i++) {
         uint8_t bits = ntscv_font[code[i] * 8 + fline];
         const uint32_t *fg = ntscv_palette[attr[i]];
         const uint8_t *gp = gline + i * 8;
         for (int j = 0; j < 4; j++) {
-            *w32++ = (bits & 0x80) ? fg[0] : ntscv_palette[gp[j * 2]][0];
-            *w32++ = (bits & 0x40) ? fg[1] : ntscv_palette[gp[j * 2 + 1]][1];
+            *w32++ = (bits & 0x80) ? fg[wsel] : ntscv_palette[gp[j * 2]][wsel];
+            *w32++ = (bits & 0x40) ? fg[wsel ^ 1] : ntscv_palette[gp[j * 2 + 1]][wsel ^ 1];
             bits <<= 2;
         }
     }
@@ -294,14 +438,15 @@ void ntscv_test_pattern(int p)
 }
 
 /* パターン1: 上位7バー (各96サンプル=24搬送波周期) + 下位グレースケール8段 */
-static void __not_in_flash_func(render_bars)(uint16_t *w, int l)
+static void __not_in_flash_func(render_bars)(uint16_t *w, int l, int po)
 {
+    int wsel = po >> 1; /* ライン位相オフセットでペア選択を入れ替える */
     uint32_t *w32 = (uint32_t *)w;
     if (l < NTSCV_FIELD_ACTIVE_LINES - 27) {
         for (int bar = 0; bar < 7; bar++) {
             for (int c = 0; c < 24; c++) {
-                *w32++ = bar_pair[bar][0];
-                *w32++ = bar_pair[bar][1];
+                *w32++ = bar_pair[bar][wsel];
+                *w32++ = bar_pair[bar][wsel ^ 1];
             }
         }
         return;
@@ -388,7 +533,7 @@ void ntscv_compose_safety_chunk(uint16_t *dst)
 {
     for (int i = 0; i < NTSCV_CHUNK_LINES; i++) {
         uint16_t *lp = dst + (size_t)i * NTSCV_SAMPLES_PER_LINE;
-        emit_head(lp, false);
+        emit_head(lp, false, 0);
         fill_samples(lp + NTSCV_LINE_HEAD_SAMPLES,
                      NTSCV_SAMPLES_PER_LINE - NTSCV_LINE_HEAD_SAMPLES,
                      NTSCV_LEVEL_BLACK);
@@ -407,11 +552,19 @@ void __not_in_flash_func(ntscv_compose_chunk)(uint16_t *dst, uint16_t first_line
     /* カラーバーストを載せるか: カラーモード、またはカラーバー表示中 */
     bool with_burst = (ntscv_mode == NTSCV_MODE_COLOR_TEXT) ||
                       (ntscv_mode == NTSCV_MODE_COLOR_GRAPH) ||
+                      (ntscv_mode == NTSCV_MODE_IJ_COLOR) ||
                       (ntscv_test_mode == 1);
+
+    /* ライン位相オフセット: 1走査線=227.5周期のためライン毎に180°交互
+       (実NTSC規格。TVのY/C分離=コムフィルタと整合する)。
+       フィールドは262ライン (偶数) なのでフィールド相対ライン番号の
+       偶奇=グローバル偶奇。バッファの再生間隔も8ライン (偶数) なので
+       チャネルリングでヘッドの位相が崩れない。 */
 
     for (int i = 0; i < NTSCV_CHUNK_LINES; i++) {
         uint16_t line = first_line + (uint16_t)i;
         uint16_t *lp = dst + (size_t)i * NTSCV_SAMPLES_PER_LINE;
+        int lpo = (int)(line & 1) << 1; /* このラインの位相オフセット */
 
         if (line < NTSCV_FIELD_VSYNC_LINES) {
             /* 垂直同期: 先頭8ライン (4チャネル分) だけ全書き込み。
@@ -429,7 +582,7 @@ void __not_in_flash_func(ntscv_compose_chunk)(uint16_t *dst, uint16_t first_line
             /* ブランキング (前): 先頭8ライン (10-17) だけ全書き込みし
                各チャネルのヘッドを確立。残りは再生 */
             if (line < NTSCV_ACTIVE_START - 18) { /* ライン10-17 */
-                emit_head(lp, with_burst);
+                emit_head(lp, with_burst, lpo);
                 fill_samples(lp + NTSCV_LINE_HEAD_SAMPLES,
                              NTSCV_SAMPLES_PER_LINE - NTSCV_LINE_HEAD_SAMPLES,
                              NTSCV_LEVEL_BLACK);
@@ -438,28 +591,43 @@ void __not_in_flash_func(ntscv_compose_chunk)(uint16_t *dst, uint16_t first_line
         }
 
         if (line < NTSCV_FRAME_MARK_LINE) {
-            /* 有効映像: 内容部 (サンプル172..843) のみ書き換え。
-               ヘッド/末尾はライン10-17の全書き込みが永続する */
-            uint16_t *act = lp + NTSCV_LINE_HEAD_SAMPLES;
+            /* 有効映像: 内容部のみ書き換え。ヘッド/末尾はライン10-17の
+               全書き込みが永続する。有効画素の位置/幅はモード別 (ntscv.h)。
+               32桁カラー (IJ_COLOR) は単色IJTEXTと同一幾何。テストパターンも
+               単色IJTEXT幾何 (172/672) で描く */
+            int astart = NTSCV_IJ_TEXT_START, awidth = NTSCV_ACTIVE_SAMPLES;
+            if (ntscv_test_mode == 0) {
+                if (ntscv_mode == NTSCV_MODE_COLOR_TEXT ||
+                    ntscv_mode == NTSCV_MODE_COLOR_GRAPH) {
+                    astart = NTSCV_COLOR_START;
+                    awidth = NTSCV_COLOR_ACTIVE_SAMPLES;
+                } else if (ntscv_mode == NTSCV_MODE_MONO_TEXT) {
+                    astart = NTSCV_MONO80_START;
+                    awidth = NTSCV_MONO80_ACTIVE_SAMPLES;
+                }
+            }
+            uint16_t *act = lp + astart;
             int l = (int)line - NTSCV_ACTIVE_START;
             if (!ntscv_font || !ntscv_vram_codes || !ntscv_vram_attrs) {
-                fill_samples(act, NTSCV_ACTIVE_SAMPLES, NTSCV_LEVEL_BLACK);
+                fill_samples(act, awidth, NTSCV_LEVEL_BLACK);
             } else {
                 int tp = ntscv_test_mode;
                 if (tp == 1) {
-                    render_bars(act, l);
+                    render_bars(act, l, lpo);
                 } else if (tp == 2) {
                     render_grid(act, l);
                 } else if (tp == 3) {
                     render_diag(act, l); /* IJ経路診断 (実フォント/TVRAMの切り分け) */
                 } else if (ntscv_mode == NTSCV_MODE_IJ_TEXT) {
                     render_ij(act, l);
+                } else if (ntscv_mode == NTSCV_MODE_IJ_COLOR) {
+                    render_ij_color(act, l, lpo);
                 } else if (ntscv_mode == NTSCV_MODE_MONO_TEXT) {
                     render_mono80(act, l);
                 } else if (ntscv_mode == NTSCV_MODE_COLOR_GRAPH) {
-                    render_color_graph(act, l);
+                    render_color_graph(act, l, lpo);
                 } else {
-                    render_color_text(act, l);
+                    render_color_text(act, l, lpo);
                 }
             }
             continue;
@@ -469,7 +637,8 @@ void __not_in_flash_func(ntscv_compose_chunk)(uint16_t *dst, uint16_t first_line
            消去 (ヘッドは永続)。残り (260-261) は再生 */
         if (line < NTSCV_LINES_PER_FIELD - 2) { /* ライン252-259 */
             fill_samples(lp + NTSCV_LINE_HEAD_SAMPLES,
-                         NTSCV_ACTIVE_SAMPLES, NTSCV_LEVEL_BLACK);
+                         NTSCV_SAMPLES_PER_LINE - NTSCV_LINE_HEAD_SAMPLES,
+                         NTSCV_LEVEL_BLACK);
         }
     }
 }
@@ -480,11 +649,22 @@ static_assert(NTSCV_FIELD_VSYNC_LINES + NTSCV_FIELD_BLANK1_LINES +
               NTSCV_FIELD_ACTIVE_LINES + NTSCV_FIELD_BLANK2_LINES ==
               NTSCV_LINES_PER_FIELD, "フィールドのライン数構成");
 
-static_assert(NTSCV_LINE_HEAD_SAMPLES + NTSCV_ACTIVE_SAMPLES +
-              NTSCV_ACTIVE_TAIL_SAMPLES == NTSCV_SAMPLES_PER_LINE, "ラインのサンプル数構成");
+static_assert(NTSCV_IJ_TEXT_START + NTSCV_ACTIVE_SAMPLES <= NTSCV_SAMPLES_PER_LINE,
+              "単色IJTEXTのライン構成");
+static_assert(NTSCV_IJ_COLOR_START + NTSCV_IJ_COLOR_SAMPLES <= NTSCV_SAMPLES_PER_LINE,
+              "32桁カラーのライン構成");
+static_assert(NTSCV_COLOR_START + NTSCV_COLOR_ACTIVE_SAMPLES <= NTSCV_SAMPLES_PER_LINE,
+              "42桁カラーのライン構成");
+static_assert(NTSCV_MONO80_START + NTSCV_MONO80_ACTIVE_SAMPLES <= NTSCV_SAMPLES_PER_LINE,
+              "80桁モノクロのライン構成");
+static_assert(NTSCV_IJ_TEXT_START % 4 == 0 && NTSCV_IJ_COLOR_START % 4 == 0 &&
+              NTSCV_COLOR_START % 4 == 0 && NTSCV_MONO80_START % 4 == 0,
+              "有効画素の開始位置は4サンプル境界 (位相整合)");
 
 static_assert(NTSCV_IJ_COLS * NTSCV_IJ_CHAR_SAMPLES == NTSCV_ACTIVE_SAMPLES, "IJ 1行のサンプル数");
-static_assert(NTSCV_COLOR_COLS * 16 == NTSCV_ACTIVE_SAMPLES, "カラー1行のサンプル数");
+static_assert(NTSCV_IJ_COLS * NTSCV_IJ_COLOR_CHAR_SAMPLES == NTSCV_IJ_COLOR_SAMPLES,
+              "32桁カラー 1行のサンプル数");
+static_assert(NTSCV_COLOR_COLS * 16 == NTSCV_COLOR_ACTIVE_SAMPLES, "カラー1行のサンプル数");
 static_assert(NTSCV_MONO80_COLS * 8 == NTSCV_MONO80_ACTIVE_SAMPLES, "モノクロ1行のサンプル数");
 
 static_assert(NTSCV_IJ_ROWS * NTSCV_IJ_LINES_PER_ROW == NTSCV_FIELD_ACTIVE_LINES, "IJ 縦構成");

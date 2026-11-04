@@ -71,3 +71,16 @@ pico_add_extra_outputs(IchigoJam_RP2040Zero)
 if (NTSCV_BOOT_TESTPATTERN)
     target_compile_definitions(IchigoJam_RP2040Zero PRIVATE NTSCV_BOOT_TESTPATTERN=${NTSCV_BOOT_TESTPATTERN})
 endif()
+
+# 診断用: -DNTSCV_MERGE_DEBUG=1 でDMA合成の割込み合流回数 (ntscv_debug_events) を
+# 画面右上に16進4桁で表示する (増え続ける=合成が間に合っていない。通常ビルドでは無効)
+if (NTSCV_MERGE_DEBUG)
+    target_compile_definitions(IchigoJam_RP2040Zero PRIVATE NTSCV_MERGE_DEBUG)
+endif()
+
+# 診断用: -DNTSCV_COLOR_GRAYTEST=1 でテキスト用パレット (0-255) の色差変調を除去し
+# 各色を平均レベル一色にする。ドット欠けが「色差変調」由来かの切り分け用
+# (バーのbar_pairはntscv_palette_calcを直接呼ぶため影響しない。通常ビルドでは無効)
+if (NTSCV_COLOR_GRAYTEST)
+    target_compile_definitions(IchigoJam_RP2040Zero PRIVATE NTSCV_COLOR_GRAYTEST)
+endif()

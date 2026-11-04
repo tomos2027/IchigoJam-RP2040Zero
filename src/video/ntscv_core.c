@@ -258,8 +258,8 @@ uint32_t ntscv_guard_b(void)
 
 static_assert(NTSCV_SYS_CLOCK_KHZ * 22 == 315 * (NTSCV_PWM_WRAP + 1) * 1000,
               "サンプルレート = 315/22 MHz = NTSCカラーサブキャリア (315/88 MHz) の4倍");
-static_assert((NTSCV_PWM_WRAP + 1) * NTSCV_SAMPLES_PER_LINE == 9988,
-              "1走査線 = 9988サイクル = 63.42us @157.5MHz");
+static_assert((NTSCV_PWM_WRAP + 1) * NTSCV_SAMPLES_PER_LINE == 10010,
+              "1走査線 = 10010サイクル = 63.556us @157.5MHz (サブキャリア227.5周期)");
 static_assert(NTSCV_LINES_PER_FIELD % 2 == 0, "チャンクはライン境界で一致すること");
 static_assert(NTSCV_LINES_PER_FIELD % NTSCV_CHUNK_LINES == 0,
               "チャンクはフィールド内で整数回転すること");

@@ -103,11 +103,44 @@ static void set_palette(uint16_t c, unsigned char b, unsigned char r, unsigned c
     ntscv_palette_set(c, b, r, g);
 }
 
+/* RGB332 (MSX風16色) → ntscvパレット (b,r,g順) へ変換して設定 */
+static inline void ntsc_set_color_palette(uint16_t n, uint8_t rgb332)
+{
+    uint8_t r = (rgb332 >> 5) & 7;
+    uint8_t g = (rgb332 >> 2) & 7;
+    uint8_t b = rgb332 & 3;
+    ntscv_palette_set(n, (uint8_t)(b * 255 / 3), (uint8_t)(r * 255 / 7), (uint8_t)(g * 255 / 7));
+}
+
+/* screen.h のパレット再設定 (COLOR用)。screen.hは本ファイルより後にincludeされるため前方宣言 */
+void screen_reset_palette(void);
+
+/* 初期化に使った音声/映像ピン (再初期化で再利用) */
+static uint8_t ntsc_pin_num = 0;
+
+/* COLORコマンド用のモード切替: 起動時と同じ経路でNTSCエンジンをフル再初期化する。
+   softにモードだけ変えると、走査線ヘッド(アンカー)のカラーバーストが前フィールドの
+   ままになりTVが色/同期をロックできず「横線が流れる/フラッシュ」になるため、
+   release→mode設定→ntscv_init でヘッドから作り直す。 */
+static void ntsc_restart_mode(unsigned char m)
+{
+    ntscv_mode = m;
+    if (m == NTSCV_MODE_COLOR_TEXT) {
+        ntscv_bind_text(TVRAM, TVRAM + ATTROFFSET, WIDTH_X, WIDTH_Y);
+    } else {
+        ntscv_bind_text(TVRAM, TVRAM + IJ_ATTROFFSET, IJ_WIDTH, IJ_ROWS);
+    }
+    clearscreen();
+    ntscv_init(ntsc_pin_num); /* 内部でreleaseして再初期化 (mode設定済→初期ヘッドにバースト) */
+    screen_reset_palette();
+}
+
 /* ビデオ出力システムを初期化し開始する (旧rp2040_pwm_ntsc_init相当)。
    呼び出し前に Fontp が設定済みであること。
    起動時はIchigoJam互換IJTEXTモードで直接始める (同期を乱さない)。 */
 static void rp2040_pwm_ntsc_init(uint8_t n)
 {
+    ntsc_pin_num = n;
     ntscv_bind_font(Fontp);
     ntscv_bind_text(TVRAM, TVRAM + IJ_ATTROFFSET, IJ_WIDTH, IJ_ROWS);
     ntscv_mode = VMODE_IJTEXT;

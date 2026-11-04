@@ -27,12 +27,14 @@ extern "C" {
 
   システムクロック157.5MHz、PWM周期11サイクル → サンプルレート14.318MHz
   = NTSCカラーサブキャリア3.579545MHzの4倍 (1周期4サンプル)。
-  1走査線908サンプル (サブキャリア227周期分)、1フィールド262ライン。
+  1走査線910サンプル (サブキャリア227.5周期分 = 実NTSC規格どおり。
+  隣接ラインで位相が180°交互になり、TVのY/C分離 (コムフィルタ) と整合)、
+  1フィールド262ライン (ラインレート15734.27Hz = 実規格)。
   NTSCV_LINES_PER_FIELD (262) は旧ドライバ互換の走査線Tickカウントにも使う。
 */
 #define NTSCV_SYS_CLOCK_KHZ   157500u
 #define NTSCV_PWM_WRAP        10        /* wrap+1 = 11サイクル = 1サンプル */
-#define NTSCV_SAMPLES_PER_LINE 908      /* 908 / 14.318MHz ≈ 63.42us/line   */
+#define NTSCV_SAMPLES_PER_LINE 910      /* 910 / 14.318MHz ≈ 63.556us/line  */
 #define NTSCV_LINES_PER_FIELD 262
 #define NTSCV_CHUNK_LINES 2             /* 1DMA転送=2走査線 (再arm期限127µs) */
 #define NTSCV_CHUNK_SAMPLES (NTSCV_CHUNK_LINES * NTSCV_SAMPLES_PER_LINE) /* 1816 */
@@ -46,12 +48,25 @@ extern "C" {
 
 /* ライン内のサンプル区分 */
 #define NTSCV_H_SYNC_SAMPLES 68        /* H同期幅 68/14.318MHz ≈ 4.75us     */
-#define NTSCV_LINE_HEAD_SAMPLES 172    /* 有効画素の開始位置 (同期+ポーチ類) */
-#define NTSCV_ACTIVE_SAMPLES 672       /* 有効画素幅 (IJ 32×21、42×16と共通) */
+#define NTSCV_LINE_HEAD_SAMPLES 152    /* ヘッド長 (同期68+ブリーズウェイ8+バースト36+ポーチ40)。全モード共通 */
+#define NTSCV_ACTIVE_SAMPLES 672       /* 単色IJTEXT (VIDEO1) の有効画素幅: 32×21 (実績幾何を維持) */
 #define NTSCV_MONO80_ACTIVE_SAMPLES 640 /* モノクロ80文字モードのみ          */
-#define NTSCV_ACTIVE_TAIL_SAMPLES (NTSCV_SAMPLES_PER_LINE - NTSCV_LINE_HEAD_SAMPLES - NTSCV_ACTIVE_SAMPLES)
 #define NTSCV_BURST_CYCLES 9            /* カラーバースト 9周期 (36サンプル)  */
 #define NTSCV_BREEZEWAY_SAMPLES 8       /* 同期末尾からバーストまでの間       */
+
+/* モード別の有効画素ジオメトリ (開始位置はすべて4サンプル境界)。
+   32桁カラー (VIDEO9) は単色IJTEXT (VIDEO1) と完全同一の幾何 (172/672,
+   21サンプル/文字)。色は「白レベル輝度+色差ティント」で表現するため
+   輝度信号がVIDEO1と同一構造になり、実機でくっきり確認済みの信号になる。
+   (現代TVは中間輝度の細かいパターンをノイズとして平滑化するため、色の
+   輝度をそのまま使うと文字ドットが欠ける — 実機の灰色パレット診断で確認) */
+#define NTSCV_IJ_COLOR_START NTSCV_IJ_TEXT_START       /* 32桁カラー (VIDEO9) 開始位置 */
+#define NTSCV_IJ_COLOR_SAMPLES NTSCV_ACTIVE_SAMPLES    /* 32桁カラー: 32文字×21サンプル */
+#define NTSCV_IJ_COLOR_CHAR_SAMPLES NTSCV_IJ_CHAR_SAMPLES
+#define NTSCV_IJ_TEXT_START 172        /* 単色IJTEXT: 有効画素開始 (実績幾何)    */
+#define NTSCV_COLOR_START 184          /* 42桁カラー: 有効画素開始 (中央配置)    */
+#define NTSCV_COLOR_ACTIVE_SAMPLES 672 /* 42桁カラー: 42文字×16サンプル          */
+#define NTSCV_MONO80_START 200         /* 80桁モノクロ: 有効画素開始 (中央配置)  */
 
 /* フレームシーケンスを進めるライン (有効映像の直後) */
 #define NTSCV_FRAME_MARK_LINE (NTSCV_FIELD_VSYNC_LINES + NTSCV_FIELD_BLANK1_LINES + NTSCV_FIELD_ACTIVE_LINES)
@@ -68,12 +83,13 @@ extern "C" {
 #define NTSCV_MODE_MONO_TEXT  5   /* 80×27文字 白黒                   */
 #define NTSCV_MODE_IJ_TEXT    6   /* 32×24文字 白黒 (IchigoJam互換)    */
 #define NTSCV_MODE_COLOR_GRAPH 18 /* 42×27文字 + 336×216 グラフィック */
+#define NTSCV_MODE_IJ_COLOR    7  /* 32×24文字 16色 (COLOR: 前景/背景を属性VRAMで指定) */
 
 /* IJTEXTモードのVRAM書式 */
 #define NTSCV_IJ_COLS 32
 #define NTSCV_IJ_ROWS 24
 #define NTSCV_IJ_LINES_PER_ROW 9  /* 8ラインフォントを9走査線に引き伸ばし */
-#define NTSCV_IJ_CHAR_SAMPLES 21 /* 1文字のサンプル幅 (32×21 = 672)      */
+#define NTSCV_IJ_CHAR_SAMPLES 21 /* 1文字のサンプル幅 (単色VIDEO1: 32×21 = 672) */
 #define NTSCV_IJ_ATTR_INVERT 0x80
 #define NTSCV_IJ_ATTR_CURSOR 0x40
 
@@ -159,6 +175,10 @@ uint32_t ntscv_guard_b(void);
    割込み内で割り算 (libgcc: フラッシュ配置) を避けるためのもの */
 void ntscv_render_boot_init(void);
 
+/* IJカラー描画表 (色×位相×21サンプル) を現在のパレットから再構築する。
+   ntscv_render_boot_init と ntscv_palette_set (色0-15変更時) から呼ばれる */
+void ntscv_render_palette_changed(void);
+
 /* 2走査線分 (1816サンプル) のチャンクを組み立てる。
    first_line: チャンク先頭のライン番号 (0..260、常に偶数)。
    バッファ永続化契約 (docs/ntsc_video_spec.md §5):
@@ -178,8 +198,14 @@ void ntscv_compose_safety_chunk(uint16_t *dst);
 /* パレット本体: [色][0]=位相0-1ペア、[1]=位相2-3ペア (リトルエンディアン) */
 extern uint32_t ntscv_palette[257][2];
 
+/* 視認性ルール適用前の生パレット (色0-15)。VIDEO9のティント色差の源 */
+extern uint32_t ntscv_palette_plain[16][2];
+
 /* RGB→4位相サンプル値の計算 (テストパターンが使用) */
 void ntscv_palette_calc(uint16_t out4[4], uint8_t b, uint8_t r, uint8_t g);
+
+/* 同上 (視認性ルールを適用しない生値。ntscv_palette_setが使用) */
+void ntscv_palette_calc_plain(uint16_t out4[4], uint8_t b, uint8_t r, uint8_t g);
 
 /* 内部走査状態 (コアが管理) */
 extern volatile uint8_t ntscv_running;

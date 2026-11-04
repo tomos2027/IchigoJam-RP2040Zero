@@ -7,6 +7,7 @@ IchigoJam BASIC 1.6.1 (4K版) の **Waveshare RP2040-Zero** (RP2040) 移植・**
 - 映像出力: **NTSCコンポジット** (GP3 + 75Ω + 560pF の外部回路 → テレビの映像入力へ)
 - キーボード: Type-CポートにUSBキーボードを直接接続 (ネイティブUSBホスト)
 - **多声PLAY (最大3声)**: AY-3-8910 (MSX互換) PSGエミュによる混合出力。声ごとの音量 `V0-15`、`SOUND reg,val` レジスタ直接操作に対応 (単声BEEP/PLAYは従来どおりクリーンなPWM方形波)
+- **NTSCカラーテキスト**: `VIDEO 9` (32×24) / `VIDEO 10` (42×27) カラーモード + MSX風16色 `COLOR f[,b[,c]]` / `COL f[,b[,c]]`、`ATTR x,y,a`、`PAL n,v` / `PAL(n)` / `PAL RESET`
 - **SDカード**: [GivetakeJam_P](https://github.com/Canon-boy4/ichigojam-firm/tree/rp2350-16130) 準拠の**共有ピン方式** (GP6/7/8/10/11、SDON中は該当OUT/INポートをブロック)
 - **アスキー形式 `SAVE n,1` → `Pnnn.BAS` (UTF-8)** でPC連携可
 - **ANA() アナログ入力対応** (IN1=GP27/ADC1、IN2=GP26/ADC0、BTN=GP28/ADC2)
