@@ -6,7 +6,6 @@
 #include "hardware/structs/watchdog.h"
 #include "hardware/structs/scb.h"
 #include "hardware/structs/systick.h"
-#include "hardware/structs/timer.h"
 #include "hardware/flash.h"
 
 //Waveshare RP2040-Zero: 側面パッドGP14 (IchigoJam_PのGP20から変更: 裏面パッド不使用のため)
@@ -186,21 +185,8 @@ static void __attribute__((noinline)) __not_in_flash_func(psg_core1_flash_op_and
     sio_hw->fifo_wr = PSG_CORE1_CMD_FLASH;
     __sev();
 
-    // 診断: core1 の進行状況を画面右上の手前セル (62) に表示。
-    // UART ログは XIP 停止中に呼べないが、TVRAM への直接書き込みは RAM なので安全。
-    uint32_t diag_start = timer_hw->timerawl;
-    while (!flash_core1_done) {
-        uint32_t now = timer_hw->timerawl;
-        if ((now - diag_start) >= 500000) { // 500ms ごと
-            diag_start = now;
-            uint t = psg_core1_trace > 9 ? 9 : psg_core1_trace;
-            uint8_t ch = (uint8_t)('0' + t);
-            TVRAM[62] = ch;
-            TVRAM[IJ_ATTROFFSET + 62] = 0x0F;
-            TVRAM[ATTROFFSET + 62] = 0x0F;
-        }
-        tight_loop_contents();
-    }
+    // 完了フラグが立つまで RAM でポーリング
+    while (!flash_core1_done) tight_loop_contents();
     systick_hw->csr = systick_ctrl;
     nvic_hw->iser = nvic_state;
 

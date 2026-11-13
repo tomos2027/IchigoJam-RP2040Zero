@@ -13,19 +13,11 @@
 #define WATCHDOG_TIMEOUT_MS 8000
 #define WATCHDOG_SAVE_TIMEOUT_MS 15000
 #endif
-void led_builtin(bool on);//診断用 (実体はext_ws.h、include順の関係で前方宣言)
+void led_builtin(bool on);//実体はext_ws.h、include順の関係で前方宣言
 // core1パーク/レジューム/フラッシュ委譲 (実体はsound.h、include順の関係で前方宣言)
 void psg_core1_park(void);
 void psg_core1_resume(void);
 static void __not_in_flash_func(psg_core1_flash_op_and_wait)(uint32_t offset, const uint8_t *data);
-// 診断: SAVE中の画面凍結フラグ (vram_to_tvram_allがこれを見て更新を止める)
-volatile uint8_t save_diag_freeze = 0;
-// 診断: ステージ番号をTVRAMセル63へ直接表示 (画面凍結中も読める)
-static void save_diag_mark(uint8 ch) {
-    TVRAM[63] = ch;
-    TVRAM[IJ_ATTROFFSET + 63] = 0x0F;
-    TVRAM[ATTROFFSET + 63] = 0x0F;
-}
 // 診断: シリアルログ (uart0=GP0, 115200, ポーリング送信+CRLF)。
 // 割込み禁止中も動作する (UARTはハードウェアで自律送出されるため)。
 // フラッシュ書込中 (XIP停止) は呼べないが、呼び出し箇所はすべてXIP生存領域
@@ -83,32 +75,13 @@ static int IJB_save(int n, uint8* list, int size) {
     _g.lastfile = n;
     int res;
     if (0 <= n && n < N_FLASH_STORAGE) {
-    uint32_t offset = calc_flash_offset(n);
-    // 診断: 画面凍結+シリアルステージログ (ハング時は端末の最終行が停止位置)
-    save_diag_freeze = 1;
-    led_builtin(true); // LED: SAVE開始の目印
-    save_diag_mark('1');
-    diag_log("[S0] save start");
-    // core1にフラッシュ消去/書込みを委譲し、core0は映像DMA割込みを継続させる。
-    // これによりフラッシュ書込み中もTV信号を維持できる。
-    // ROMの program 関数はデータバッファが 4 byte アラインメントされていることを要求するため、
-    // スタック上の list をアラインバッファへコピーして渡す。
-    memcpy(flash_sector_buffer, list, FLASH_SECTOR_SIZE);
-    save_diag_mark('2');
-    diag_log("[S4] erase begin");
-    psg_core1_flash_op_and_wait(offset, flash_sector_buffer); // RAM配置: フラッシュビジー中もXIP不要
-    diag_log("[S5] erase+prog done");
-    save_diag_mark('3');
-    diag_log("[S5a] mark3 ok");
-    diag_log("[S9] flash wait done");
-    led_builtin(false);
-    // psg_core1_resume() は不要: core1 は完了フラグセット後そのままメインループへ復帰
-    save_diag_mark('5');
-    diag_log("[S11] save done");
-    save_diag_mark('7'); // 全ステージ完了
-    save_diag_freeze = 0; // 画面更新再開
-    diag_log("[S12] save exit");
-    res = 0;
+        uint32_t offset = calc_flash_offset(n);
+        // core1にフラッシュ消去/書込みを委譲し、core0は映像DMA割込みを継続させる。
+        // ROMの program 関数はデータバッファが 4 byte アラインメントされていることを要求するため、
+        // スタック上の list をアラインバッファへコピーして渡す。
+        memcpy(flash_sector_buffer, list, FLASH_SECTOR_SIZE);
+        psg_core1_flash_op_and_wait(offset, flash_sector_buffer); // RAM配置: フラッシュビジー中もXIP不要
+        res = 0;
     } else if (EEPROM_OFFSET <= n && n < EEPROM_OFFSET + EEPROM_SIZE) {
         res = write_eeprom((n - EEPROM_OFFSET) * SIZELIMIT, list, SIZELIMIT);
     } else {

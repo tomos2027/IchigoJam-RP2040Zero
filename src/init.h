@@ -32,8 +32,6 @@ static void __not_in_flash_func(ntsc_line_callback)(void) {
 //1フレーム分vramの内容をNTSCのTVRAMに反映する
 //VIDEO 3, 4 (screen_big) のときは1文字をmagxmag文字に複製して拡大表示する
 void vram_to_tvram_all(bool visible_cursor) {
-    // 診断: SAVE中は画面凍結 (TVRAMへはSAVE診断が直接ステージ番号を書く)
-    if (save_diag_freeze) return;
     //PCG (0xE0-0xFF) をフォントRAMへ反映 (POKE #700-#7FF対応)
     memcpy(ntsc_fontram + 0xE0 * 8, screen_pcg, SIZE_PCG * 8);
 
@@ -215,41 +213,10 @@ bool timer(repeating_timer_t* rt) {
         }
      } else {
         vram_to_tvram_all(_g.cursorflg);
-#ifdef NTSCV_MERGE_DEBUG
-        //診断: DMA合成の割込み合流回数 (ntscv_core.cのmerge_events) を画面右上に
-        //16進4桁でTVRAMへ直接表示する。増え続ける=合成が1チャンク (127µs) に間に合っていない。
-        //VIDEO10は未使用領域 (0行38-41列)、VIDEO1/9は0行28-31列に重畳する。
-        //先頭にリセット要因1文字を付与: W=ウォッチドッグ再起動 P=電源投入/パワオンリセット
-        //D=デバッカ G=グリッチ(電源瞬断) U=不明
-        {
-            uint16_t ev = ntscv_debug_events();
-            uint8_t ox = (ntscv_mode == NTSCV_MODE_COLOR_TEXT) ? 38 : 28;
-            uint32_t rsn = watchdog_hw->reason;
-            uint8_t rc = 'U';
-            if (rsn & 1) rc = 'W';            // watchdog
-            else if (rsn & 2) rc = 'D';       // debug port
-            else if (rsn & 4) rc = 'G';       // glitch / power
-            else if (rsn == 0) rc = 'P';      // power-on (reason無し)
-            TVRAM[ox] = rc;
-            for (int i = 0; i < 4; i++) {
-                uint8_t nib = (uint8)((ev >> (12 - 4 * i)) & 15);
-                TVRAM[ox + 1 + i] = (uint8)(nib < 10 ? '0' + nib : 'A' + nib - 10);
-                if (ntscv_mode == NTSCV_MODE_COLOR_TEXT)
-                    TVRAM[ATTROFFSET + ox + 1 + i] = 0x0F;//白/黒 (下位=前景15, 上位=背景0)
-                else
-                    TVRAM[IJ_ATTROFFSET + ox + 1 + i] = 0;//単色モード: 通常表示
-            }
-            if (ntscv_mode == NTSCV_MODE_COLOR_TEXT)
-                TVRAM[ATTROFFSET + ox] = 0x0F;
-            else
-                TVRAM[IJ_ATTROFFSET + ox] = 0;
-        }
-#endif
         //ハートビート: 内蔵WS2812 (GP16) を約1Hzで緑点滅 (システム生存確認)
         //LEDコマンドはGP2を制御 (GP16とは独立)
-        //SAVE診断中 (save_diag_freeze) はハートビートを停止し、LEDを診断専用にする
         static bool heartbeat = true;
-        if (!save_diag_freeze && (frames & 31) == 0) {
+        if ((frames & 31) == 0) {
             heartbeat = !heartbeat;
             led_builtin(heartbeat);
         }
@@ -264,7 +231,6 @@ bool timer(repeating_timer_t* rt) {
 //ハードフォルト時に内蔵WS2812を高速点滅させる (画面が使えなくても状態を通知する、診断用)
 //ウォッチドッグを止めないと8秒後に再起動して点滅が消えてしまう
 void isr_hardfault(void) {
-    diag_log("[H!] HARDFAULT"); // 固着がフォルト由来かどうかをシリアルで判別
     watchdog_disable();
     bool on = true;
     led_builtin(true);
@@ -311,9 +277,6 @@ void pico_init() {
     set_sys_clock_khz(157500, true);
 
     stdio_uart_init();//クロックを変えてから初期化する
-    // 診断: 再起動理由 (0=電源投入 1=ウォッチドッグ 2=デバッガ 4=電源グリッチ)。
-    // SAVE後の「画面フラッシュ+再起動」がウォッチドッグ由来かどうかの判別用
-    diag_log_hex("[B-1] rstreason=", watchdog_hw->reason);
     // uart_set_hw_flow(UART_ID, false, false);//いる？
     // uart_set_fifo_enabled(UART_ID, false);
     irq_set_exclusive_handler(UART_IRQ, on_uart_rx);

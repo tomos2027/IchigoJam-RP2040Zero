@@ -6,9 +6,6 @@
 //timer()内でwatchdog_update()を呼んで生きていることを伝える
 #ifndef WATCHDOG_TIMEOUT_MS
 #define WATCHDOG_TIMEOUT_MS 8000
-// フラッシュ書込 (SAVE/KBD) 中のウォッチドッグ期限延長値。
-// RP2040ウォッチドッグの最大は約16.7秒のため15秒とする
-#define WATCHDOG_SAVE_TIMEOUT_MS 15000
 #endif
 
 static uint scb_orig;
