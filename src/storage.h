@@ -5,12 +5,62 @@
 #ifndef __STORAGE_H__
 #define __STORAGE_H__
 #include "all_includes.h"
+#include "hardware/uart.h"
 
 #define FLASH_IJ_OFFSET (0x200000 - FLASH_SECTOR_SIZE * 2)//SAVE0,LOAD0で操作するセクタの先頭(一番最後のセクタはKBDの設定値などを保存するのに使うので、その1つ前のセクタ)
+// ウォッチドッグ定数 (system.hは後でincludeされるためここでも定義する)
+#ifndef WATCHDOG_TIMEOUT_MS
+#define WATCHDOG_TIMEOUT_MS 8000
+#define WATCHDOG_SAVE_TIMEOUT_MS 15000
+#endif
+void led_builtin(bool on);//診断用 (実体はext_ws.h、include順の関係で前方宣言)
+// core1パーク/レジューム/フラッシュ委譲 (実体はsound.h、include順の関係で前方宣言)
+void psg_core1_park(void);
+void psg_core1_resume(void);
+static void __not_in_flash_func(psg_core1_flash_op_and_wait)(uint32_t offset, const uint8_t *data);
+// 診断: SAVE中の画面凍結フラグ (vram_to_tvram_allがこれを見て更新を止める)
+volatile uint8_t save_diag_freeze = 0;
+// 診断: ステージ番号をTVRAMセル63へ直接表示 (画面凍結中も読める)
+static void save_diag_mark(uint8 ch) {
+    TVRAM[63] = ch;
+    TVRAM[IJ_ATTROFFSET + 63] = 0x0F;
+    TVRAM[ATTROFFSET + 63] = 0x0F;
+}
+// 診断: シリアルログ (uart0=GP0, 115200, ポーリング送信+CRLF)。
+// 割込み禁止中も動作する (UARTはハードウェアで自律送出されるため)。
+// フラッシュ書込中 (XIP停止) は呼べないが、呼び出し箇所はすべてXIP生存領域
+// のため文字列リテラルも安全。CPUが固まっても送信済み/FO内の行は端末に届く
+static void diag_log(const char *s) {
+    while (*s) {
+        uart_putc_raw(uart0, *s++);
+    }
+    uart_putc_raw(uart0, '\r');
+    uart_putc_raw(uart0, '\n');
+}
+// 診断: ラベル+16進数値を1行で出力 (park失敗時のステータスダンプ用)
+static void diag_log_hex(const char *label, uint32_t v) {
+    char buf[40];
+    int i = 0;
+    while (*label && i < 24) buf[i++] = *label++;
+    buf[i++] = '0'; buf[i++] = 'x';
+    for (int b = 28; b >= 0; b -= 4) {
+        uint8_t nib = (uint8_t)((v >> b) & 0xFu);
+        buf[i++] = (char)(nib < 10 ? '0' + nib : 'A' + nib - 10);
+    }
+    buf[i++] = '\r'; buf[i++] = '\n'; buf[i] = 0;
+    const char *p = buf;
+    while (*p) uart_putc_raw(uart0, *p++);
+}
+
+
+
 #define EEPROM_OFFSET 100
 //4K版: 外部EEPROMのスロット数 (1スロット=4096バイト、32スロット=128KB、表示/保存範囲は100..131固定)
 #define EEPROM_SIZE 32
 #define SIZELIMIT (IJB_SIZEOF_LIST - 2)//=1プログラムのサイズ (4K版: 4096)
+
+// core1 フラッシュ書込み用の 4 byte アラインメントバッファ (ROM の program 関数が要求)
+static uint8_t flash_sector_buffer[FLASH_SECTOR_SIZE] __attribute__((aligned(4)));
 
 INLINE int IJB_file() {
     return _g.lastfile;
@@ -33,19 +83,32 @@ static int IJB_save(int n, uint8* list, int size) {
     _g.lastfile = n;
     int res;
     if (0 <= n && n < N_FLASH_STORAGE) {
-        uint32_t offset = calc_flash_offset(n);
-        int save = save_and_disable_interrupts();
-        flash_range_erase(offset, FLASH_SECTOR_SIZE);
-        flash_range_program(offset, list, FLASH_SECTOR_SIZE);
-        restore_interrupts(save);
-        if (ntsc_active()) {
-            //NTSC動作中は映像を止めずに書き込む (I2C_EEPROMと同じ方式:
-            //DMAチェーンはSRAMだけで動くため割り込み禁止中も同期信号は保たれ、画面は書込中一時フリーズするだけ)
-            //長い割り込み禁止で走査線カウンタが表示位置からずれたので、位相を合わせ直す
-            ntsc_release();
-            ntsc_init();
-        }
-        res = 0;
+    uint32_t offset = calc_flash_offset(n);
+    // 診断: 画面凍結+シリアルステージログ (ハング時は端末の最終行が停止位置)
+    save_diag_freeze = 1;
+    led_builtin(true); // LED: SAVE開始の目印
+    save_diag_mark('1');
+    diag_log("[S0] save start");
+    // core1にフラッシュ消去/書込みを委譲し、core0は映像DMA割込みを継続させる。
+    // これによりフラッシュ書込み中もTV信号を維持できる。
+    // ROMの program 関数はデータバッファが 4 byte アラインメントされていることを要求するため、
+    // スタック上の list をアラインバッファへコピーして渡す。
+    memcpy(flash_sector_buffer, list, FLASH_SECTOR_SIZE);
+    save_diag_mark('2');
+    diag_log("[S4] erase begin");
+    psg_core1_flash_op_and_wait(offset, flash_sector_buffer); // RAM配置: フラッシュビジー中もXIP不要
+    diag_log("[S5] erase+prog done");
+    save_diag_mark('3');
+    diag_log("[S5a] mark3 ok");
+    diag_log("[S9] flash wait done");
+    led_builtin(false);
+    // psg_core1_resume() は不要: core1 は完了フラグセット後そのままメインループへ復帰
+    save_diag_mark('5');
+    diag_log("[S11] save done");
+    save_diag_mark('7'); // 全ステージ完了
+    save_diag_freeze = 0; // 画面更新再開
+    diag_log("[S12] save exit");
+    res = 0;
     } else if (EEPROM_OFFSET <= n && n < EEPROM_OFFSET + EEPROM_SIZE) {
         res = write_eeprom((n - EEPROM_OFFSET) * SIZELIMIT, list, SIZELIMIT);
     } else {

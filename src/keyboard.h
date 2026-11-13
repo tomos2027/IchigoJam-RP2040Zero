@@ -16,7 +16,7 @@ volatile static char* keybuf = (char*)(ram + (OFFSET_RAM_KEYBUF + 1));
 struct keyflg_def key_flg;
 extern uint8_t keycode2ascii[128][4];
 static int uart_baudrate = UART_DEFAULT_BPS;
-static uint8_t tflash[FLASH_SECTOR_SIZE];//フラッシュの中身の一部を書き換えてから書き戻すための一時変数、トップレベルで宣言しておかないと画面の描画が止まる？
+static uint8_t tflash[FLASH_SECTOR_SIZE] __attribute__((aligned(4)));//フラッシュの中身の一部を書き換えてから書き戻すための一時変数
 
 static inline uint key_getKeyboardID() {
     uint mode = get_flash(get_config_offset())[0];
@@ -37,18 +37,10 @@ INLINE void IJB_kbd(uint mode) {
     uint32_t offset = get_config_offset();
     memcpy(tflash, get_flash(offset), FLASH_SECTOR_SIZE);
     tflash[0] = mode;
-    int save = save_and_disable_interrupts();
-    flash_range_erase(offset, FLASH_SECTOR_SIZE);
-    flash_range_program(offset, tflash, FLASH_SECTOR_SIZE);
-    restore_interrupts(save);
-    if (ntsc_active()) {
-        //NTSC動作中は映像を止めずに書き込む (IJB_saveと同じ方式:
-        //DMAチェーンはSRAMだけで動くため割り込み禁止中も同期信号は保たれ、画面は書込中一時フリーズするだけ)
-        //長い割り込み禁止で走査線カウンタが表示位置からずれたので、位相を合わせ直す
-        ntsc_release();
-        ntsc_init();
-    }
+    // core1にフラッシュ消去/書込みを委譲し、core0は映像DMA割込みを継続させる
+    psg_core1_flash_op_and_wait(offset, tflash);
 }
+
 
 INLINE void uart_init_IJ() {
     // #if DEFAULT_UARTMODE_TXD != 0
