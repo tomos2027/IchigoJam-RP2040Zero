@@ -44,10 +44,10 @@ void vram_to_tvram_all(bool visible_cursor) {
         cursor_pos = _g.cursory * SCREEN_W + _g.cursorx;
     }
 
-    // ===== カラーモード (COLOR) =====
-    // セル属性 = 下位4bit前景 / 上位4bit背景。反転・カーソルは前景と背景を入れ替えて表現する。
+    // ===== カラーモード (VIDEO 9/10: IJ_COLOR / COLOR_TEXT) =====
+    // セル属性 = 下位4bit前景 / 上位4bit背景。反転・カーソルは前景と背景を入れ替える。
     if (ntscv_mode == NTSCV_MODE_IJ_COLOR) {
-        // 32x24 IJTEXTレイアウト + カラー属性
+        // 32x24 IchigoJam互換レイアウト + カラー属性
         ntsc_mag = 1;
         for (int y = 0; y < SCREEN_H; y++) {
             for (int x = 0; x < SCREEN_W; x++) {
@@ -63,9 +63,6 @@ void vram_to_tvram_all(bool visible_cursor) {
     }
     if (ntscv_mode == NTSCV_MODE_COLOR_TEXT) {
         // 42x27グリッド。32x24のテキストを左上に配置し、残りは背景色0。
-        // 未使用領域 (32列以降/24行以降) はモード切替時のclearscreen()でゼロ化済みなので
-        // 毎フレーム書かない。毎フレームの全クリアは優先度0のDMA合成IRQに割り込まれ、
-        // 半分クリア (黒) のチャンクが表示されて黒線が画面をスクロールする原因になるため廃止。
         ntsc_mag = 1;
         for (int y = 0; y < SCREEN_H; y++) {
             for (int x = 0; x < SCREEN_W; x++) {
@@ -80,7 +77,7 @@ void vram_to_tvram_all(bool visible_cursor) {
         return;
     }
 
-    // ===== 単色 IJTEXT (従来) =====
+    // ===== 単色 IJTEXT (従来。VIDEO 1-4 など) =====
     uint8 attr = _g.screen_invert ? IJ_ATTR_INVERT : 0;
     int mag = 1 << _g.screen_big;
     ntsc_mag = mag;//NTSC描画側に拡大倍率を伝える (複製セルを拡大グリフの断片として描画する)
@@ -108,7 +105,7 @@ void ntsc_init() {
     memcpy(ntsc_fontram, CHAR_PATTERN, 256 * 8);
     Fontp = ntsc_fontram;
     rp2040_pwm_ntsc_init(NTSC_PIN);
-    screen_reset_palette();//COLOR用16色パレット (MSX風RGB332) をntscvへ反映
+    screen_reset_palette();//COLOR用16色パレットをNTSCドライバへ反映
     ntsc_set_line_callback(ntsc_line_callback);
     //IJTEXTモードへ直接設定する (set_videomodeだとstop/start_compositeが走り同期が乱れるため)
     videomode = VMODE_IJTEXT;
@@ -144,24 +141,15 @@ bool timer(repeating_timer_t* rt) {
     watchdog_update();//ウォッチドッグをfeedする (core0が固まったら自動再起動)
     psg_tick();
     set_tone();
-#ifdef NTSCV_BOOT_TESTPATTERN
-    //テストパターンは約10秒表示した後BASICへ降りる
-    //(カラー信号の面積スケール確認→VIDEO9/10でのテキスト診断を連続して行うため)
-    {
-        static bool tp_cleared;
-        if (!tp_cleared && frames > 600) {
-            tp_cleared = true;
-            ntscv_test_pattern(0);
-        }
-    }
-#endif
     //NTSC整合性チェック (診断用): メモリ破壊を検知したらエラー番号を画面に表示し、以降の通常画面更新を止める
     uint32_t err = 0;
     if (Fontp != ntsc_fontram) err |= 1;//フォントポインタ破壊
     if (vram != (uint8*)RAM_VRAM) err |= 2;//VRAMポインタ破壊
-    if (videomode != VMODE_IJTEXT &&
-        videomode != NTSCV_MODE_IJ_COLOR &&
-        videomode != NTSCV_MODE_COLOR_TEXT) err |= 4;//ビデオモード破壊 (カラー2モードは正当)
+    if (videomode != NTSCV_MODE_IJ_TEXT &&
+        videomode != NTSCV_MODE_COLOR_TEXT &&
+        videomode != NTSCV_MODE_COLOR_GRAPH &&
+        videomode != NTSCV_MODE_MONO_TEXT &&
+        videomode != NTSCV_MODE_IJ_COLOR) err |= 4;//ビデオモード破壊
     if (ntsc_fg.canary1 != 0xC0DE6001 || ntsc_fg.canary2 != 0xC0DE6002) err |= 8;//フォントRAM境界破壊
     if (ntscv_guard_a() != NTSCV_GUARD_A_VALUE || ntscv_guard_b() != NTSCV_GUARD_B_VALUE) err |= 16;//DMAバッファ境界破壊
     if (ntsc_scanline() >= NUM_LINES) err |= 32;//走査線カウンタ破壊
@@ -200,10 +188,10 @@ bool timer(repeating_timer_t* rt) {
         *p++ = '0' + f / 100;
         *p++ = '0' + (f / 10) % 10;
         *p++ = '0' + f % 10;
-        //カラーモードでもE番号が見えるよう、先頭8セルの属性を白(前景15/背景0)にする
+        //E番号が見えるよう、先頭8セルの属性を白(前景7/背景0)にする
         for (int i = 0; i < 8; i++) {
-            TVRAM[IJ_ATTROFFSET + i] = 0x0F;
-            TVRAM[ATTROFFSET + i] = 0x0F;
+            TVRAM[IJ_ATTROFFSET + i] = 0x07;
+            TVRAM[ATTROFFSET + i] = 0x07;
         }
         //エラー時は内蔵WS2812を高速点滅させて知らせる
         static bool diag_led;

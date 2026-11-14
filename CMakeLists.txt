@@ -22,8 +22,8 @@ pico_sdk_init()
 add_executable(IchigoJam_RP2040Zero
 	src/main.c
 	src/video/ntscv_core.c
-	src/video/ntscv_render.c
 	src/video/ntscv_palette.c
+	src/video/ntscv_render.c
 )
 
 # WS.LED (WS2812B) はPIOで波形を生成する (CPUの長時間割込み禁止を避ける)
@@ -37,7 +37,6 @@ target_include_directories(IchigoJam_RP2040Zero PUBLIC
 	# Make sure TinyUSB can find tusb_config.h
 	${CMAKE_CURRENT_LIST_DIR}/src
 	${CMAKE_CURRENT_LIST_DIR}/src/ntsc
-	${CMAKE_CURRENT_LIST_DIR}/src/video
 )
 
 # pico-sdk / pico-extras はリポジトリ直下にcloneして使う (README参照)

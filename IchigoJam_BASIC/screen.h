@@ -296,17 +296,38 @@ S_INLINE void uart_putc(char c);
 
 // ===== NTSCカラー (COLOR / PAL / ATTR) =====
 // 画面は常に32x24。カラー属性は各文字セルに1バイト (下位4bit=前景, 上位4bit=背景)。
-// パレットはMSX風16色のRGB332値 (GivetakeJam_P rp2350-16132準拠)。
+// 既定パレットは phyllosoma / オリジナル IchigoJam-RP2040Zero と同じ並び (B,R,G ビット)。
 #define SCREEN_ATTR_MAX (32 * 24)
 static uint8 screen_attr[SCREEN_ATTR_MAX];
-static const uint8 screen_palette_def[16] = {
-	0x00, 0x00, 0x3D, 0x7D, 0x27, 0x4F, 0xEC, 0x5B,
-	0xE5, 0xEE, 0xFC, 0xDD, 0x31, 0xC7, 0xB6, 0xFF
-};
 static uint8 screen_pal[16];
-static uint8 screen_fg = 15;       // 現在の前景色
-static uint8 screen_bg = 1;        // 現在の背景色
-static uint8 screen_border = 1;    // 周辺色 (予約: 値のみ保持)
+static uint8 screen_fg = 7;        // 現在の前景色 (既定パレットで 7=白)
+static uint8 screen_bg = 0;        // 現在の背景色 (既定パレットで 0=黒)
+static uint8 screen_border = 0;    // 周辺色 (予約: 値のみ保持)
+
+/* 8bit RGB → RGB332 (PAL(n) 返却用) */
+S_INLINE uint8 screen_rgb332(uint8 r, uint8 g, uint8 b) {
+	return (uint8)((r & 0xE0) | ((g >> 3) & 0x1C) | ((b >> 6) & 0x03));
+}
+
+/* 既定の16色パレット (phyllosoma オリジナル準拠: 下位3bitのB,R,G組み合わせ + 半輝度) */
+static const uint8 screen_palette_rgb[16][3] = {
+	{   0,   0,   0 }, /* 0 黒 */
+	{   0,   0, 255 }, /* 1 青 */
+	{ 255,   0,   0 }, /* 2 赤 */
+	{ 255,   0, 255 }, /* 3 紫 */
+	{   0, 255,   0 }, /* 4 緑 */
+	{   0, 255, 255 }, /* 5 水色 */
+	{ 255, 255,   0 }, /* 6 黄 */
+	{ 255, 255, 255 }, /* 7 白 */
+	{   0,   0, 128 }, /* 8 暗青 */
+	{ 128,   0,   0 }, /* 9 暗赤 */
+	{ 128,   0, 128 }, /* 10 暗紫 */
+	{   0, 128,   0 }, /* 11 暗緑 */
+	{   0, 128, 128 }, /* 12 暗水色 */
+	{ 128, 128,   0 }, /* 13 暗黄 */
+	{ 128, 128, 128 }, /* 14 灰 */
+	{   0,   0,   0 }, /* 15 黒 */
+};
 
 S_INLINE uint8 screen_attr_current(void) {
 	return (uint8)((screen_fg & 15) | ((screen_bg & 15) << 4));
@@ -336,10 +357,18 @@ void screen_set_palette(int n, int v) {
 	screen_pal[n] = (uint8)v;
 	ntsc_set_color_palette((uint16_t)n, (uint8)v);
 }
+void screen_set_palette_rgb(int n, int r, int g, int b) {
+	if (n < 0 || n > 15 || r < 0 || r > 255 || g < 0 || g > 255 || b < 0 || b > 255) return;
+	screen_pal[n] = screen_rgb332((uint8)r, (uint8)g, (uint8)b);
+	ntsc_set_color_rgb((uint16_t)n, (uint8)r, (uint8)g, (uint8)b);
+}
 void screen_reset_palette(void) {
 	for (int i = 0; i < 16; i++) {
-		screen_pal[i] = screen_palette_def[i];
-		ntsc_set_color_palette((uint16_t)i, screen_pal[i]);
+		uint8 r = screen_palette_rgb[i][0];
+		uint8 g = screen_palette_rgb[i][1];
+		uint8 b = screen_palette_rgb[i][2];
+		screen_pal[i] = screen_rgb332(r, g, b);
+		ntsc_set_color_rgb((uint16_t)i, r, g, b);
 	}
 }
 int screen_get_attr(int x, int y) {

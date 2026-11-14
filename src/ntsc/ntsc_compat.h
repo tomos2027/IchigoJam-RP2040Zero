@@ -49,6 +49,7 @@ IchigoJam移植部 (init.h/display.h/keyboard.h/storage.h) が旧ドライバ
 #define VMODE_WIDETEXT NTSCV_MODE_COLOR_TEXT
 #define VMODE_MONOTEXT NTSCV_MODE_MONO_TEXT
 #define VMODE_IJTEXT NTSCV_MODE_IJ_TEXT
+#define VMODE_IJCOLOR NTSCV_MODE_IJ_COLOR
 #define VMODE_WIDEGRPH NTSCV_MODE_COLOR_GRAPH
 
 /* テキスト/グラフィックモード値 (互換の vestigial 値) */
@@ -110,6 +111,12 @@ static inline void ntsc_set_color_palette(uint16_t n, uint8_t rgb332)
     uint8_t g = (rgb332 >> 2) & 7;
     uint8_t b = rgb332 & 3;
     ntscv_palette_set(n, (uint8_t)(b * 255 / 3), (uint8_t)(r * 255 / 7), (uint8_t)(g * 255 / 7));
+}
+
+/* 8bit RGB → ntscvパレット (b,r,g順) へ直接設定 */
+static inline void ntsc_set_color_rgb(uint16_t n, uint8_t r, uint8_t g, uint8_t b)
+{
+    ntscv_palette_set(n, b, r, g);
 }
 
 /* screen.h のパレット再設定 (COLOR用)。screen.hは本ファイルより後にincludeされるため前方宣言 */

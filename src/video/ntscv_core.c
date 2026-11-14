@@ -37,14 +37,26 @@ mod 262の算術が自動的に追跡する)。
 #include "hardware/pwm.h"
 #include "hardware/dma.h"
 #include "hardware/irq.h"
+#include "hardware/uart.h"
 #include <assert.h>
 
 #define NTSCV_DMA_CHANNELS 4
+
+// 診断: シリアルログ (storage.hと同名の別TUローカル実装)。
+// 起動時/SAVE後の再初期化時の進行をuart0(GP0,115200)へ出力する
+static void diag_log(const char *s) {
+    while (*s) {
+        uart_putc_raw(uart0, *s++);
+    }
+    uart_putc_raw(uart0, '\r');
+    uart_putc_raw(uart0, '\n');
+}
 
 volatile uint16_t ntscv_frame_seq = 0;
 volatile uint8_t ntscv_mode = NTSCV_MODE_COLOR_TEXT;
 volatile uint8_t ntscv_ij_zoom = 1;
 volatile uint8_t ntscv_ij_cursor_xor = 0;
+volatile int16_t ntscv_ij_cursor_cell = -1;
 volatile uint8_t ntscv_running = 0;
 
 /* DMAチャンクバッファ (1チャネル分=2走査線) ×4 + 安全チャンク。
@@ -116,11 +128,13 @@ static void __not_in_flash_func(ntscv_dma_irq_handler)(void)
 void ntscv_init(uint8_t gpio)
 {
     if (engine_inited) ntscv_release();
+    diag_log("[B0] ntscv_init");
 
     /* クロック: 呼び出し側で157.5MHz設定済みのこと (未設定ならここで設定) */
     if (clock_get_hz(clk_sys) != (uint32_t)NTSCV_SYS_CLOCK_KHZ * 1000u) {
         set_sys_clock_khz(NTSCV_SYS_CLOCK_KHZ, true);
     }
+    diag_log("[B0a] clock ok");
 
     ntscv_dma_bufs.guard_a = NTSCV_GUARD_A_VALUE;
     ntscv_dma_bufs.guard_b = NTSCV_GUARD_B_VALUE;
@@ -132,6 +146,7 @@ void ntscv_init(uint8_t gpio)
 
     ntscv_render_boot_init(); /* ライン変換表 (割込み内の割り算排除) */
     ntscv_palette_default(); /* 既定パレット (RGB+半輝度+白+背景黒) */
+    diag_log("[B0b] tables ok");
 
     out_pin = gpio;
     pwm_slice_num = pwm_gpio_to_slice_num(gpio);
@@ -142,6 +157,7 @@ void ntscv_init(uint8_t gpio)
     pwm_config_set_clkdiv(&cfg, 1.f);
     pwm_init(pwm_slice_num, &cfg, false);
     pwm_set_wrap(pwm_slice_num, NTSCV_PWM_WRAP); /* 11サイクル = 1サンプル */
+    diag_log("[B1] dma cfg");
 
     /* DMAの書込先: CCレジスタの該当チャネル半分 (16ビット) */
     volatile void *cc_half = (pwm_chan == PWM_CHAN_A)
@@ -168,6 +184,7 @@ void ntscv_init(uint8_t gpio)
 
     /* 先頭4チャンク (ライン0-7) を用意し、各チャネルは4スロット先を作る */
     ntscv_running = 1;
+    diag_log("[B2] chunks");
     for (int i = 0; i < NTSCV_DMA_CHANNELS; i++) {
         ntscv_compose_chunk(ntscv_dma_bufs.chunk[i],
                            (uint16_t)(i * NTSCV_CHUNK_LINES));
@@ -176,16 +193,19 @@ void ntscv_init(uint8_t gpio)
 
     uint32_t mask = 0;
     for (int i = 0; i < NTSCV_DMA_CHANNELS; i++) mask |= 1u << dma_ch[i];
-    dma_set_irq1_channel_mask_enabled(mask, true);
-    irq_set_exclusive_handler(DMA_IRQ_1, ntscv_dma_irq_handler);
-    irq_set_enabled(DMA_IRQ_1, true);
     /* 最高優先度にする。USB等より優先しないとチャンクのバッファ更新が
        間に合わず走査位相がずれて画面が流れる */
     irq_set_priority(DMA_IRQ_1, 0);
+    dma_set_irq1_channel_mask_enabled(mask, true);
+    irq_set_exclusive_handler(DMA_IRQ_1, ntscv_dma_irq_handler);
+    irq_set_enabled(DMA_IRQ_1, true);
+    diag_log("[B3] irq arm");
 
     pwm_set_enabled(pwm_slice_num, true);
+    diag_log("[B4] dma start");
     dma_channel_start(dma_ch[0]);
     engine_inited = true;
+    diag_log("[B5] ntscv_init done");
 }
 
 void ntscv_release(void)
@@ -201,9 +221,71 @@ void ntscv_release(void)
     dma_set_irq1_channel_mask_enabled(mask, false);
     irq_set_enabled(DMA_IRQ_1, false);
     irq_remove_handler(DMA_IRQ_1, ntscv_dma_irq_handler);
+    /* 割込みを無効にしてもNVIC/DMAのペンディングビットは残るため、
+       次回 ntscv_init() 実行時に誤った古い完了フラグが新しい channel と
+       番号が重なる場合に処理されないようクリアする */
+    dma_hw->ints1 = mask;
     pwm_set_enabled(pwm_slice_num, false);
     gpio_set_function(out_pin, GPIO_FUNC_NULL);
     engine_inited = false;
+}
+
+/* フラッシュ書込前の安全同期出力: 4チャンネルバッファを垂直同期領域
+   （ライン0-7）で埋め、合成を停止する。DMAハードウェアは自動連鎖を
+   続けるため、CPUを長時間止めてもTVは同期を保つ。 */
+void ntscv_freeze_vsync(void)
+{
+    if (!engine_inited) return;
+    for (int i = 0; i < NTSCV_DMA_CHANNELS; i++) {
+        ntscv_compose_chunk(ntscv_dma_bufs.chunk[i],
+                           (uint16_t)(i * NTSCV_CHUNK_LINES));
+    }
+    ntscv_running = 0;
+}
+
+void ntscv_unfreeze(void)
+{
+    ntscv_running = 1;
+}
+
+/* ソフトリセット: PWM/DMAを止めずにDMAリングをフィールド先頭から再構成する。
+   フラッシュ書込後の位相再整合用。停止時間を極力短縮し、TVの同期ロックを維持する。 */
+void ntscv_resync(void)
+{
+    if (!engine_inited) {
+        ntscv_init(out_pin);
+        return;
+    }
+
+    uint32_t mask = 0;
+    for (int i = 0; i < NTSCV_DMA_CHANNELS; i++) mask |= 1u << dma_ch[i];
+
+    /* DMA割込みを一時停止。NVIC/DMA両方のペンディングをクリアする */
+    irq_set_enabled(DMA_IRQ_1, false);
+    irq_clear(DMA_IRQ_1);
+    dma_hw->ints1 = mask;
+
+    /* 実行中のチャネルを安全に停止 */
+    for (int i = 0; i < NTSCV_DMA_CHANNELS; i++) {
+        dma_channel_abort(dma_ch[i]);
+    }
+
+    /* フィールド先頭から4チャンクを再構成し、arm_nextも初期状態に戻す */
+    for (int i = 0; i < NTSCV_DMA_CHANNELS; i++) {
+        ntscv_compose_chunk(ntscv_dma_bufs.chunk[i],
+                           (uint16_t)(i * NTSCV_CHUNK_LINES));
+        arm_next[i] = (uint16_t)((NTSCV_DMA_CHANNELS + i) * NTSCV_CHUNK_LINES);
+    }
+
+    /* 各チャネルの読み出しアドレスと転送回数をリセット (設定・chainは不変) */
+    for (int i = 0; i < NTSCV_DMA_CHANNELS; i++) {
+        dma_channel_set_read_addr(dma_ch[i], ntscv_dma_bufs.chunk[i], false);
+        dma_channel_set_transfer_count(dma_ch[i], NTSCV_CHUNK_SAMPLES, false);
+    }
+
+    /* 割込みを再有効化してchannel0から再開 */
+    irq_set_enabled(DMA_IRQ_1, true);
+    dma_channel_start(dma_ch[0]);
 }
 
 void ntscv_stop(void)
@@ -258,8 +340,8 @@ uint32_t ntscv_guard_b(void)
 
 static_assert(NTSCV_SYS_CLOCK_KHZ * 22 == 315 * (NTSCV_PWM_WRAP + 1) * 1000,
               "サンプルレート = 315/22 MHz = NTSCカラーサブキャリア (315/88 MHz) の4倍");
-static_assert((NTSCV_PWM_WRAP + 1) * NTSCV_SAMPLES_PER_LINE == 10010,
-              "1走査線 = 10010サイクル = 63.556us @157.5MHz (サブキャリア227.5周期)");
+static_assert((NTSCV_PWM_WRAP + 1) * NTSCV_SAMPLES_PER_LINE == 9988,
+              "1走査線 = 9988サイクル = 63.42us @157.5MHz (サブキャリア227周期)");
 static_assert(NTSCV_LINES_PER_FIELD % 2 == 0, "チャンクはライン境界で一致すること");
 static_assert(NTSCV_LINES_PER_FIELD % NTSCV_CHUNK_LINES == 0,
               "チャンクはフィールド内で整数回転すること");

@@ -27,14 +27,15 @@ extern "C" {
 
   システムクロック157.5MHz、PWM周期11サイクル → サンプルレート14.318MHz
   = NTSCカラーサブキャリア3.579545MHzの4倍 (1周期4サンプル)。
-  1走査線910サンプル (サブキャリア227.5周期分 = 実NTSC規格どおり。
-  隣接ラインで位相が180°交互になり、TVのY/C分離 (コムフィルタ) と整合)、
-  1フィールド262ライン (ラインレート15734.27Hz = 実規格)。
+  1走査線908サンプル (サブキャリア227周期分)、1フィールド262ライン。
+  ※旧ドライバ (実機でカラー表示の実績あり) と同一の幾何に回帰した。
+    910サンプル (227.5周期・ライン毎にバースト位相180°交互) も試したが、
+    実機では色表示の改善が得られず、むしろ起動画面の問題と相関したため廃止。
   NTSCV_LINES_PER_FIELD (262) は旧ドライバ互換の走査線Tickカウントにも使う。
 */
 #define NTSCV_SYS_CLOCK_KHZ   157500u
 #define NTSCV_PWM_WRAP        10        /* wrap+1 = 11サイクル = 1サンプル */
-#define NTSCV_SAMPLES_PER_LINE 910      /* 910 / 14.318MHz ≈ 63.556us/line  */
+#define NTSCV_SAMPLES_PER_LINE 908      /* 908 / 14.318MHz ≈ 63.42us/line  */
 #define NTSCV_LINES_PER_FIELD 262
 #define NTSCV_CHUNK_LINES 2             /* 1DMA転送=2走査線 (再arm期限127µs) */
 #define NTSCV_CHUNK_SAMPLES (NTSCV_CHUNK_LINES * NTSCV_SAMPLES_PER_LINE) /* 1816 */
@@ -46,27 +47,22 @@ extern "C" {
 #define NTSCV_FIELD_BLANK2_LINES 10    /* ライン252-261: ブランキング(後)     */
 #define NTSCV_ACTIVE_START (NTSCV_FIELD_VSYNC_LINES + NTSCV_FIELD_BLANK1_LINES)
 
-/* ライン内のサンプル区分 */
+/* ライン内のサンプル区分 (旧ドライバと同一幾何) */
 #define NTSCV_H_SYNC_SAMPLES 68        /* H同期幅 68/14.318MHz ≈ 4.75us     */
-#define NTSCV_LINE_HEAD_SAMPLES 152    /* ヘッド長 (同期68+ブリーズウェイ8+バースト36+ポーチ40)。全モード共通 */
-#define NTSCV_ACTIVE_SAMPLES 672       /* 単色IJTEXT (VIDEO1) の有効画素幅: 32×21 (実績幾何を維持) */
+#define NTSCV_LINE_HEAD_SAMPLES 172    /* 有効画素の開始位置 (同期+ポーチ類) */
+#define NTSCV_ACTIVE_SAMPLES 672       /* 有効画素幅 (IJ 32×21、42×16と共通) */
 #define NTSCV_MONO80_ACTIVE_SAMPLES 640 /* モノクロ80文字モードのみ          */
 #define NTSCV_BURST_CYCLES 9            /* カラーバースト 9周期 (36サンプル)  */
 #define NTSCV_BREEZEWAY_SAMPLES 8       /* 同期末尾からバーストまでの間       */
 
-/* モード別の有効画素ジオメトリ (開始位置はすべて4サンプル境界)。
-   32桁カラー (VIDEO9) は単色IJTEXT (VIDEO1) と完全同一の幾何 (172/672,
-   21サンプル/文字)。色は「白レベル輝度+色差ティント」で表現するため
-   輝度信号がVIDEO1と同一構造になり、実機でくっきり確認済みの信号になる。
-   (現代TVは中間輝度の細かいパターンをノイズとして平滑化するため、色の
-   輝度をそのまま使うと文字ドットが欠ける — 実機の灰色パレット診断で確認) */
-#define NTSCV_IJ_COLOR_START NTSCV_IJ_TEXT_START       /* 32桁カラー (VIDEO9) 開始位置 */
-#define NTSCV_IJ_COLOR_SAMPLES NTSCV_ACTIVE_SAMPLES    /* 32桁カラー: 32文字×21サンプル */
+/* モード別の有効画素 (旧ドライバ: 全モード H_PICTURE=172 から) */
+#define NTSCV_IJ_COLOR_START NTSCV_IJ_TEXT_START
+#define NTSCV_IJ_COLOR_SAMPLES NTSCV_ACTIVE_SAMPLES
 #define NTSCV_IJ_COLOR_CHAR_SAMPLES NTSCV_IJ_CHAR_SAMPLES
-#define NTSCV_IJ_TEXT_START 172        /* 単色IJTEXT: 有効画素開始 (実績幾何)    */
-#define NTSCV_COLOR_START 184          /* 42桁カラー: 有効画素開始 (中央配置)    */
-#define NTSCV_COLOR_ACTIVE_SAMPLES 672 /* 42桁カラー: 42文字×16サンプル          */
-#define NTSCV_MONO80_START 200         /* 80桁モノクロ: 有効画素開始 (中央配置)  */
+#define NTSCV_IJ_TEXT_START 172
+#define NTSCV_COLOR_START 172
+#define NTSCV_COLOR_ACTIVE_SAMPLES 672
+#define NTSCV_MONO80_START 172
 
 /* フレームシーケンスを進めるライン (有効映像の直後) */
 #define NTSCV_FRAME_MARK_LINE (NTSCV_FIELD_VSYNC_LINES + NTSCV_FIELD_BLANK1_LINES + NTSCV_FIELD_ACTIVE_LINES)
@@ -112,6 +108,7 @@ extern volatile uint16_t ntscv_frame_seq;  /* フィールド終端ごとに+1 (
 extern volatile uint8_t ntscv_mode;        /* 現在の表示モード                   */
 extern volatile uint8_t ntscv_ij_zoom;     /* IJ拡大倍率 1/2/4/8 (VRAMは複製格子) */
 extern volatile uint8_t ntscv_ij_cursor_xor; /* IJカーソルのXORマスク (0x00/0xF0/0xFF) */
+extern volatile int16_t ntscv_ij_cursor_cell; /* カラーモード用カーソルセル位置 (32x24インデックス、-1=なし) */
 
 /*==== API ===*/
 
@@ -124,6 +121,18 @@ void ntscv_init(uint8_t gpio);
 /* DMAチャネル・PWM・割込みを完全に解放する (再開は ntscv_init)。
    フラッシュ書込等で割込みを長時間止めたあとの位相再整合にも使う。 */
 void ntscv_release(void);
+
+/* PWM/DMAを止めずにDMAリングをフィールド先頭から再構成する。
+   フラッシュ書込後の位相再整合用: TVの同期ロックを維持しつつ位相を戻す。 */
+void ntscv_resync(void);
+
+/* フラッシュ書込前に呼ぶ: 4チャンネルバッファを垂直同期領域（ライン0-7）で
+   埋め、以降の合成を停止する。DMAハードウェアは自動連鎖を続けるため、
+   CPUを長時間止めてもTVは同期を保つ。 */
+void ntscv_freeze_vsync(void);
+
+/* フラッシュ書込後に呼ぶ: 合成を再開する。 */
+void ntscv_unfreeze(void);
 
 /* 映像を一時停止/再開する (停止中は同期信号も出ない) */
 void ntscv_stop(void);
@@ -198,14 +207,8 @@ void ntscv_compose_safety_chunk(uint16_t *dst);
 /* パレット本体: [色][0]=位相0-1ペア、[1]=位相2-3ペア (リトルエンディアン) */
 extern uint32_t ntscv_palette[257][2];
 
-/* 視認性ルール適用前の生パレット (色0-15)。VIDEO9のティント色差の源 */
-extern uint32_t ntscv_palette_plain[16][2];
-
 /* RGB→4位相サンプル値の計算 (テストパターンが使用) */
 void ntscv_palette_calc(uint16_t out4[4], uint8_t b, uint8_t r, uint8_t g);
-
-/* 同上 (視認性ルールを適用しない生値。ntscv_palette_setが使用) */
-void ntscv_palette_calc_plain(uint16_t out4[4], uint8_t b, uint8_t r, uint8_t g);
 
 /* 内部走査状態 (コアが管理) */
 extern volatile uint8_t ntscv_running;

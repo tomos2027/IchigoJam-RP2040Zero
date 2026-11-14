@@ -3323,18 +3323,18 @@ S_INLINE void command_video() {
 		VIDEO 3 - big
 		VIDEO 4 - big invert
 		VIDEO 9 - 32x24 カラー (COLOR/PAL/ATTR)
-		VIDEO 10 - 42x27 カラー
+		VIDEO 10 - 42x27 カラー (COLOR/PAL/ATTR)
 		*/
 		if (video == 9 || video == 10) {
 			_g.screen_big = 0;
 			_g.screen_invert = 0;
-			ntsc_restart_mode(video == 9 ? NTSCV_MODE_IJ_COLOR : NTSCV_MODE_COLOR_TEXT);
+			ntsc_restart_mode(video == 9 ? VMODE_IJCOLOR : VMODE_WIDETEXT);
 			screen_clear();
 			return;
 		}
-		// カラーモードから戻る場合は起動時と同じ経路でIJTEXTへフル再初期化
-		if (ntscv_mode != NTSCV_MODE_IJ_TEXT) {
-			ntsc_restart_mode(NTSCV_MODE_IJ_TEXT);
+		// カラーモードから戻る場合はIJTEXTへ戻す
+		if (videomode != VMODE_IJTEXT) {
+			ntsc_restart_mode(VMODE_IJTEXT);
 		}
 		if (video < 0)
 			video = 0;
@@ -3377,7 +3377,9 @@ S_INLINE void command_color() {
 	}
 	screen_set_color(color[0], color[1], color[2]);
 }
-// PAL n,v / PAL RESET : 色番号n(0..15)のRGB332値v(0..255)を設定/既定へ戻す
+// PAL n,v   : 色番号n(0..15)のRGB332値v(0..255)を設定
+// PAL n,r,g,b : 8bit RGBで直接設定
+// PAL RESET : 既定パレットへ戻す
 S_INLINE void command_pal() {
 	int code = token_getCode();
 	if (code == TOKEN_RESET) {
@@ -3393,14 +3395,34 @@ S_INLINE void command_pal() {
 		command_error(ERR_SYNTAX_ERROR);
 		return;
 	}
-	int16 value = token_expression();
+	int16 v1 = token_expression();
 	IJB_ERR_CHK();
-	token_end();
-	if (color < 0 || color > 15 || value < 0 || value > 255) {
-		command_error(ERR_INDEX_OUT_OF_RANGE);
-		return;
+	code = token_getCode();
+	if (code == TOKEN_COMMA) {
+		int16 v2 = token_expression();
+		IJB_ERR_CHK();
+		code = token_getCode();
+		if (code != TOKEN_COMMA) {
+			command_error(ERR_SYNTAX_ERROR);
+			return;
+		}
+		int16 v3 = token_expression();
+		IJB_ERR_CHK();
+		token_end();
+		if (color < 0 || color > 15 || v1 < 0 || v1 > 255 || v2 < 0 || v2 > 255 || v3 < 0 || v3 > 255) {
+			command_error(ERR_INDEX_OUT_OF_RANGE);
+			return;
+		}
+		screen_set_palette_rgb(color, v1, v2, v3);
+	} else {
+		token_back();
+		token_end();
+		if (color < 0 || color > 15 || v1 < 0 || v1 > 255) {
+			command_error(ERR_INDEX_OUT_OF_RANGE);
+			return;
+		}
+		screen_set_palette(color, v1);
 	}
-	screen_set_palette(color, value);
 }
 // ATTR x,y,a : 既存セルの色属性 a=前景+背景*16 を設定
 S_INLINE void command_attr() {
