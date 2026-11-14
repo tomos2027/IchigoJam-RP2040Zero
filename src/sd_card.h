@@ -7,7 +7,7 @@
  *  - 基板にTFスロットがないため、SDカードモジュールを側面エッジパッドに外部配線する
  *    MISO=GP8 (OUT1と共有)、CS=GP6 (IN3と共有)、CLK=GP10 (OUT3と共有)、MOSI=GP11 (OUT4と共有)
  *    カード検出=GP7 (IN4と共有、SDモジュールのCD端子またはGND直結でLOW=挿入)
- *  - SDON中は共有ピン (OUT1/OUT3/OUT4/IN3/IN4) のOUT/PWM/WS.LED/IR.INをブロックする
+ *  - SDON中は共有ピン (OUT1/OUT3/OUT4/IN3/IN4) のOUT/PWM/WS.LED/IR.IN/IR.OUTをブロックする
  *    (sd_pin_reserved機構、SDOFFでI/O状態へ復帰)
  *  - 起動時のOUT端子LOWという既存仕様は変更しない。SDOFFでIN3はプルアップ入力へ戻す
  *  - 400kHzで初期化し1MHzで転送する。読み取りに失敗したら100kHzへ自動フォールバック

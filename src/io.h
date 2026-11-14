@@ -5,7 +5,7 @@
 //Waveshare RP2040-Zero パッド割り当て
 //側面エッジパッド: GP0-15 + GP26-28 (+電源/GND)
 //裏面パッド: GP17-25 (本機では未使用)
-//GP6/7/8/10/11はSDカード (SPI1) と共有 (SDON中はOUT/PWM/WS.LED/IR.INがブロックされる)
+//GP6/7/8/10/11はSDカード (SPI1) と共有 (SDON中はOUT/PWM/WS.LED/IR.IN/IR.OUTがブロックされる)
 //GP16は基板内蔵WS2812 (ハートビート/診断専用、ext_ws.hのled_builtinで駆動)
 #define LED 2   // 側面パッド (LEDコマンド/OUT7/WS.LED 8で使用、通常GPIO)
 #define WS2812_PIN 15 // 側面パッド (WS.LED 7の外部WS2812データ出力)
@@ -266,13 +266,75 @@ void IJB_dac(int port, int val) {
 
 //BASICのINポート番号→GPIO番号 (4K版、IR.INコマンド用、GivetakeJam_P準拠)
 static int ir_port_to_gpio(int port) {
-    switch (port) {
-        case 1: return IN1;
-        case 2: return IN2;
-        case 3: return sd_pin_reserved(IN3) ? -1 : IN3;//SD動作中は使用不可
-        case 4: return sd_pin_reserved(IN4) ? -1 : IN4;//SD動作中は使用不可
-    }
-    return -1;
+	switch (port) {
+		case 1: return IN1;
+		case 2: return IN2;
+		case 3: return sd_pin_reserved(IN3) ? -1 : IN3;//SD動作中は使用不可
+		case 4: return sd_pin_reserved(IN4) ? -1 : IN4;//SD動作中は使用不可
+	}
+	return -1;
+}
+
+//===== NEC赤外線送信 (IR.OUTコマンド用) =====
+//38kHzキャリアはPWM高速モードで生成 (PWM port,630,-1260と同一)。
+//キャリアON/OFFはコンペアレベル (630=50% ON、0=常LOW) でゲートする。
+//PWMはハード自律で動作するため、割り込みを止める必要はなくNTSC表示に影響しない。
+#define IR_TX_CARRIER_LEVEL 630 // wrap=1259の50%デューティ
+#define IR_TX_CARRIER_WRAP  1259
+#define IR_TX_LEADER_ON_US  9000
+#define IR_TX_LEADER_OFF_US 4500
+#define IR_TX_BIT_ON_US     560
+#define IR_TX_BIT0_OFF_US   560
+#define IR_TX_BIT1_OFF_US   1690
+#define IR_TX_TRAILER_US    560
+#define IR_TX_FRAME_GAP_US  40000 // 連送間隔の目安 (全体で約108ms周期になるよう残りは待つ)
+
+//戻り値: 0=成功 -1=ポート不正/SD使用中
+static int ir_nec_tx(int port, uint32_t frame /*LSBファースト: addr,~addr,cmd,~cmd*/, int repeat) {
+	if (!(1 <= port && port <= 6)) {
+		return -1;
+	}
+	uint8_t pin = out_pins[port - 1];
+	if (sd_pin_reserved(pin)) {
+		return -1;//SD動作中の共有ピンは出力禁止
+	}
+	if (repeat < 1) {
+		repeat = 1;
+	}
+	//キャリア設定 (PWM高速モードと同一: 38kHz 50%、ON/OFFはレベルで制御)
+	gpio_set_function(pin, GPIO_FUNC_PWM);
+	uint slice_num = pwm_gpio_to_slice_num(pin);
+	pwm_set_clkdiv(slice_num, pwm_clkdiv_for_48mhz());
+	pwm_set_wrap(slice_num, IR_TX_CARRIER_WRAP);
+	pwm_set_gpio_level(pin, 0);       // 最初はLOW (IR LED OFF)
+	pwm_set_enabled(slice_num, true); // キャリアを常時稼働させておく
+	pwm_slice_fast_mode[slice_num] = 1;
+
+	for (int f = 0; f < repeat; f++) {
+		if (f && stopExecute()) {
+			break;//連送中のESC中断
+		}
+		if (f) {
+			sleep_us(IR_TX_FRAME_GAP_US);
+		}
+		//リーダー: ON 9ms → OFF 4.5ms
+		pwm_set_gpio_level(pin, IR_TX_CARRIER_LEVEL);
+		sleep_us(IR_TX_LEADER_ON_US);
+		pwm_set_gpio_level(pin, 0);
+		sleep_us(IR_TX_LEADER_OFF_US);
+		//データ32ビット (LSBファースト)
+		for (int i = 0; i < 32; i++) {
+			pwm_set_gpio_level(pin, IR_TX_CARRIER_LEVEL);
+			sleep_us(IR_TX_BIT_ON_US);
+			pwm_set_gpio_level(pin, 0);
+			sleep_us(((frame >> i) & 1) ? IR_TX_BIT1_OFF_US : IR_TX_BIT0_OFF_US);
+		}
+		//トレーラー: ON 560µs
+		pwm_set_gpio_level(pin, IR_TX_CARRIER_LEVEL);
+		sleep_us(IR_TX_TRAILER_US);
+		pwm_set_gpio_level(pin, 0);
+	}
+	return 0;
 }
 
 #endif

@@ -419,8 +419,10 @@ S_INLINE void command_iot_out();
 #endif
 S_INLINE void command_ws_out();
 S_INLINE void command_ir_in(); // NEC赤外線受信 IR.IN port,[n] (4K版、GivetakeJam_P準拠)
+S_INLINE void command_ir_out(); // NEC赤外線送信 IR.OUT port,data[,repeat] / IR.OUT port,[n][,repeat]
 S_INLINE void command_env_in(); // AHT20+BMP280環境センサー ENV.IN [n] (4K版、GivetakeJam_P準拠)
 static int ir_port_to_gpio(int port); // BASICのINポート番号→GPIO番号 (io.hで定義)
+static int ir_nec_tx(int port, uint32_t frame, int repeat); // NEC赤外線送信エンジン (io.hで定義)
 
 
 // token -----------------------------------------------------------------
@@ -641,6 +643,7 @@ int basic_execute(char* commandline) {
 			//case TOKEN_WS_OUT:	command_ws_out();							break;
 			case TOKEN_WS_LED:	command_ws_out();							break; // WS.LED port,n[,repeat] ポート選択式 (4K版)
 			case TOKEN_IR_IN:	command_ir_in();							break; // 4K版 (GivetakeJam_P準拠)
+			case TOKEN_IR_OUT:	command_ir_out();							break; // NEC赤外線送信: IR.OUT port,data[,repeat] / IR.OUT port,[n][,repeat]
 			case TOKEN_ENV_IN:	command_env_in();							break; // 4K版 (GivetakeJam_P準拠)
 			default:
 				#ifdef USE_EXTENSION
@@ -4091,6 +4094,60 @@ S_INLINE void command_ir_in() {
     *basic_getArrayPtr(base + 4) = rpt;
     *basic_getArrayPtr(base + 5) = err;
     *basic_getArrayPtr(base + 6) = mode;
+}
+
+//IR.OUT port,data[,repeat] / IR.OUT port,[n][,repeat] NEC赤外線送信コマンド
+//  数値形式: data の上位8bit=アドレス、下位8bit=コマンド。~addr/~cmd は自動生成。
+//            負数は下位16ビットとして扱う (例: #8001 → -32767 でもアドレス#80・コマンド#01)。
+//  配列形式: [n]〜[n+3] に IR.IN で受信した4バイト、[n+6] のモードを参照してそのまま再送。
+//            IR.IN 1,0 : IR.OUT 5,0 で受信コードを再送 (学習リモート化) できる。
+S_INLINE void command_ir_out() {
+	int port = token_expression();
+	IJB_ERR_CHK();
+
+	int code = token_getCode();
+	if (code != TOKEN_COMMA) {
+		command_error(ERR_SYNTAX_ERROR);
+		return;
+	}
+
+	uint32_t frame;
+	Token t;
+	Token_get(t);
+	if (t.code == TOKEN_ARRAY) {
+		//配列形式: IR.INの受信結果を再送
+		int base = token_getArrayIndex();
+		IJB_ERR_CHK();
+
+		if (base < 0 || base + 6 >= IJB_SIZEOF_ARRAY_MAX) {
+			command_error(ERR_INDEX_OUT_OF_RANGE);
+			return;
+		}
+		uint8_t b0 = (uint8_t)(*basic_getArrayPtr(base + 0));
+		uint8_t b1 = (uint8_t)(*basic_getArrayPtr(base + 1));
+		uint8_t b2 = (uint8_t)(*basic_getArrayPtr(base + 2));
+		uint8_t b3 = (uint8_t)(*basic_getArrayPtr(base + 3));
+		if ((uint8_t)(b0 ^ b1) == 0xff) {
+			//標準NEC: 送信順 addr,~addr,cmd,~cmd
+			frame = b0 | ((uint32_t)b1 << 8) | ((uint32_t)b2 << 16) | ((uint32_t)b3 << 24);
+		} else {
+			//NEC拡張: IR.INは表示順 (上位バイト先頭) で格納するため入れ替え
+			frame = b1 | ((uint32_t)b0 << 8) | ((uint32_t)b2 << 16) | ((uint32_t)b3 << 24);
+		}
+	} else {
+		//数値形式
+		token_back();
+		int data = token_expression();
+		IJB_ERR_CHK();
+		uint8_t addr = (uint8_t)(data >> 8);
+		uint8_t cmd  = (uint8_t)data;
+		frame = addr | ((uint32_t)(~addr & 0xff) << 8) | ((uint32_t)cmd << 16) | ((uint32_t)(~cmd & 0xff) << 24);
+	}
+
+	int repeat = token_option1(1);
+	IJB_ERR_CHK();
+
+	ir_nec_tx(port, frame, repeat);
 }
 
 // ===== 4K版: ENV.IN コマンド (GivetakeJam_P実装を移植) =====
