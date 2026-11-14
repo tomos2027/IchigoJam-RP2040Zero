@@ -3136,7 +3136,7 @@ S_INLINE void command_pwm() {
 		return;
 	}
 	int16 m = token_expression();
-	int16 l = token_option1(0);
+	int16 l = token_option1(2000);
 	IJB_pwm(n, m, l);
 }
 S_INLINE void command_clo() {

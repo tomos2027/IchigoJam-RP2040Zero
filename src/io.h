@@ -29,11 +29,23 @@
 #define ANA_THRESHOLD (1024 / 4)
 
 //ラズパイの動作クロックはNTSC駆動の157.5MHz
-//PWMのカウントクロックを常に1MHzにする (clkdiv = sysクロック/1MHz)
-//IchigoJamのPWMは1周期20msなので50Hz
+//PWMコマンド: PWM port,plen[,period]
+//  period 省略/>=0 : 0.01msec単位 (1MHzカウンタ)。period=2000で20msec (50Hz、サーボ用)
+//  period < 0      : 高速モード。plen/|period| は 1/48µs 単位。
+//                    例: PWM 5,630,-1260 -> 48MHz/1260 ≈ 38kHz 50%デューティ
+//OUT1-6のうち、OUT1/2・OUT3/4・OUT5/6はそれぞれ同じPWMスライスを共有し周期はペア共通
 //https://rikei-tawamure.com/entry/2021/02/08/213335#PWM%E7%94%A8%E3%82%AB%E3%82%A6%E3%83%B3%E3%82%BF PWMの計算方法は左記参照
 #define PWM_CLKDIV_MHZ() (clock_get_hz(clk_sys) / (1000.0f * 1000.0f))
-#define PWM_WRAP 19999 // 1MHz / 50Hz - 1
+
+//各PWMスライスが高速(48MHz)モードかを記憶する。クロック変更後(io_reconfig_pwm)の再設定用
+static uint8 pwm_slice_fast_mode[8] = {0};
+
+static inline float pwm_clkdiv_for_48mhz(void) {
+    // sysclk を 48MHz で割り、RP2040 clkdiv の分解能 1/16 以下に切り捨てる
+    uint32_t sys_hz = clock_get_hz(clk_sys);
+    uint32_t div16 = (sys_hz * 16) / 48000000;
+    return (float)div16 / 16.0f;
+}
 
 void sound_reconfig();//sound.hで定義 (io.hより後ろにincludeされるため前方宣言)
 void led_builtin(bool on);//ext_ws.hで定義 (基板内蔵WS2812=GP16をハートビート/診断表示に使う、LEDコマンドはGP2)
@@ -42,32 +54,59 @@ static uint8 in_pins[] = { IN1, IN2, IN3, IN4, OUT1, OUT2, OUT3, OUT4, BTN, OUT5
 static uint8 out_pins[] = { OUT1, OUT2, OUT3, OUT4, OUT5, OUT6, LED, IN1, IN2, IN3, IN4 };
 
 void IJB_pwm(int port, int plen, int len) {
-    if (!(1 <= port && port <= 5)) {
+    if (!(1 <= port && port <= 6)) {
         return;
     }
-
     if (plen < 0) {
         plen = 0;
-    } else if (plen > PLEN_MAX) {
-        plen = PLEN_MAX;
     }
+
     uint8 pin = out_pins[port - 1];
     if (sd_pin_reserved(pin)) {
         return;//SD動作中の共有ピンはPWM化禁止
     }
     gpio_set_function(pin, GPIO_FUNC_PWM);
     uint slice_num = pwm_gpio_to_slice_num(pin);
-    pwm_set_clkdiv(slice_num, PWM_CLKDIV_MHZ());
-    pwm_set_wrap(slice_num, PWM_WRAP);
-    pwm_set_gpio_level(pin, (PWM_WRAP + 1) * plen / PLEN_MAX);
+
+    uint16_t wrap;
+    uint16_t level;
+
+    if (len < 0) {
+        // 高速モード: 数2/|数3| = 1/48µs 単位
+        int period = -len;
+        if (period < 2) period = 2;
+        if (period > 65536) period = 65536;
+        if (plen > period) plen = period; // level=wrap+1 で常時HIGH(100%)も許容
+        wrap = (uint16_t)(period - 1);
+        level = (uint16_t)plen;
+        pwm_set_clkdiv(slice_num, pwm_clkdiv_for_48mhz());
+        pwm_slice_fast_mode[slice_num] = 1;
+    } else {
+        // 通常モード: 0.01msec 単位 (1MHz カウンタ)
+        int period = len;
+        if (period <= 0) period = 2000;   // 省略時/異常値は 20msec
+        if (period > PLEN_MAX) period = PLEN_MAX;
+        if (plen > PLEN_MAX) plen = PLEN_MAX;
+        wrap = (uint16_t)(period * 10 - 1);
+        int l = plen * 10;
+        if (l > wrap + 1) l = wrap + 1;   // 100% デューティまで
+        level = (uint16_t)l;
+        pwm_set_clkdiv(slice_num, PWM_CLKDIV_MHZ());
+        pwm_slice_fast_mode[slice_num] = 0;
+    }
+
+    pwm_set_wrap(slice_num, wrap);
+    pwm_set_gpio_level(pin, level);
     pwm_set_enabled(slice_num, true);
 }
 
 //クロックを変更したときに、PWM出力中のOUTポートとサウンドの分周比を再設定する
 void io_reconfig_pwm() {
-    float div = PWM_CLKDIV_MHZ();
+    float div_slow = PWM_CLKDIV_MHZ();
+    float div_fast = pwm_clkdiv_for_48mhz();
     for (int i = 0; i < 6; i++) {//OUT1-6
-        pwm_set_clkdiv(pwm_gpio_to_slice_num(out_pins[i]), div);
+        uint slice = pwm_gpio_to_slice_num(out_pins[i]);
+        pwm_set_clkdiv(slice, pwm_slice_fast_mode[slice] ? div_fast : div_slow);
     }
     sound_reconfig();
 }
