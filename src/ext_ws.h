@@ -97,8 +97,10 @@ static void __noinline __not_in_flash_func(ws_bitbang_out) (uint8 pin, int nled,
             }
         }
         restore_interrupts(save);
-        sleep_us(300); //フレーム間/終端のリセット (repeat時もラッチされるようにする)
+        //フレーム間の割込み許可窓は数µs (WS2812リセット閾値50µs未満) のみなので、
+        //repeat分のデータが後続LEDへ流れ続ける (公式IchigoJamのタイル動作)
     }
+    sleep_us(300); //終端のリセット (ラッチ)
 }
 
 //WS.LED port,n[,repeat] (4K版: ポート選択式+拡張配列変数対応)
@@ -122,6 +124,8 @@ static void __noinline ws_out(int port, int nled, int repeat) {
     }
 
     ws_pio_configure(pin);//この中で300usのリセットを出す
+    //repeat回数分、リセットを挟まず連続送信する (公式IchigoJam仕様:
+    //n個分のパターンが後続LEDへ流れて、テープ長分タイル状に繰り返される)
     for (int i = 0; i < repeat; i++) {
         for (int j = 0; j < nled * 3; j += 3) {//1つのLEDにつき、3つの変数が必要
             uint8 g = *basic_getArrayPtr(j);
@@ -130,11 +134,11 @@ static void __noinline ws_out(int port, int nled, int repeat) {
             uint32_t v = ((uint32_t)g << 24) | ((uint32_t)r << 16) | ((uint32_t)b << 8);
             pio_sm_put_blocking(ws_pio, ws_pio_sm, v); //GRB順、下位8bitは無視される
         }
-        while (!pio_sm_is_tx_fifo_empty(ws_pio, ws_pio_sm)) {
-            tight_loop_contents();
-        }
-        sleep_us(330); //最後の1ワード(約30us) + リセット(300us)
     }
+    while (!pio_sm_is_tx_fifo_empty(ws_pio, ws_pio_sm)) {
+        tight_loop_contents();
+    }
+    sleep_us(330); //最後の1ワード(約30us) + リセット(300us) でラッチ
     ws_pio_release(pin);
 }
 
