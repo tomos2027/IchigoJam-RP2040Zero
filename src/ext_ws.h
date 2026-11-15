@@ -38,6 +38,9 @@ static void __noinline __not_in_flash_func(wsled_send_one_signal_1575) (uint8 pi
     }
 }
 
+//WS2812B-2020以降のリセット時間は>280µsのものがあるためマージンを取る
+#define WS_RESET_US 500
+
 //===== WS.LED送信 =====
 //通常はPIOでWS2812波形を生成する。CPUは送信FIFOが埋まるまで待つだけで、
 //NTSCのDMA割込み (DMA_IRQ_1) を止めないため画面が乱れない。
@@ -62,13 +65,18 @@ static bool ws_pio_init(void) {
 
 //ピンをPIOに接続し、SMを最初の命令で停止させてLowを保持したままリセット時間を作る
 static void ws_pio_configure(uint8 pin) {
+    //SIO出力がHIGHになっている場合 (OUT n,1/LED 1後等) も、PIO切替前に確実にLOWへ
+    //SIOラッチ操作はパッドに直接影響しないので、PIO機能中でも安全
+    gpio_put(pin, false);
+    gpio_set_dir(pin, GPIO_OUT);
+
     pio_sm_set_enabled(ws_pio, ws_pio_sm, false);
     pio_sm_clear_fifos(ws_pio, ws_pio_sm);
     pio_sm_restart(ws_pio, ws_pio_sm);
     ws2812_program_init(ws_pio, ws_pio_sm, ws_pio_offset, pin, 800000.0f, false);
     gpio_set_drive_strength(pin, GPIO_DRIVE_STRENGTH_12MA);//5Vストリップ向けに信号マージンを確保
     gpio_set_slew_rate(pin, GPIO_SLEW_RATE_FAST);
-    sleep_us(300); //リセット信号
+    sleep_us(WS_RESET_US); //リセット信号 (WS2812B-2020世代のTreset>280µsにマージン)
 }
 
 static void ws_pio_release(uint8 pin) {
@@ -86,9 +94,11 @@ static void __noinline __not_in_flash_func(ws_bitbang_out) (uint8 pin, int nled,
     gpio_set_drive_strength(pin, GPIO_DRIVE_STRENGTH_12MA);
     gpio_set_slew_rate(pin, GPIO_SLEW_RATE_FAST);
     gpio_put(pin, false);
-    sleep_us(300); //リセット信号
+    sleep_us(WS_RESET_US); //リセット信号
+    //repeat分を1つの割込み禁止区間で連続送信 (フレーム間にリセットが入らない)
+    //最悪でも119LED×3×24×1.26µs≈11ms/1repeatで、NTSC表示はDMAで維持される
+    int save = save_and_disable_interrupts();
     for (int i = 0; i < repeat; i++) {
-        int save = save_and_disable_interrupts();
         for (int j = 0; j < nled * 3; j++) {//1つのLEDにつき、3つの変数が必要
             uint16 v = *basic_getArrayPtr(j); //拡張配列変数対応 (4K版)
             for (int k = 7; k >= 0; k--) {
@@ -96,11 +106,9 @@ static void __noinline __not_in_flash_func(ws_bitbang_out) (uint8 pin, int nled,
                 wsled_send_one_signal_1575(pin, bit);
             }
         }
-        restore_interrupts(save);
-        //フレーム間の割込み許可窓は数µs (WS2812リセット閾値50µs未満) のみなので、
-        //repeat分のデータが後続LEDへ流れ続ける (公式IchigoJamのタイル動作)
     }
-    sleep_us(300); //終端のリセット (ラッチ)
+    restore_interrupts(save);
+    sleep_us(WS_RESET_US); //終端のリセット (ラッチ)
 }
 
 //WS.LED port,n[,repeat] (4K版: ポート選択式+拡張配列変数対応)
@@ -123,7 +131,7 @@ static void __noinline ws_out(int port, int nled, int repeat) {
         return;
     }
 
-    ws_pio_configure(pin);//この中で300usのリセットを出す
+    ws_pio_configure(pin);//この中でリセットを出す
     //repeat回数分、リセットを挟まず連続送信する (公式IchigoJam仕様:
     //n個分のパターンが後続LEDへ流れて、テープ長分タイル状に繰り返される)
     for (int i = 0; i < repeat; i++) {
@@ -138,7 +146,7 @@ static void __noinline ws_out(int port, int nled, int repeat) {
     while (!pio_sm_is_tx_fifo_empty(ws_pio, ws_pio_sm)) {
         tight_loop_contents();
     }
-    sleep_us(330); //最後の1ワード(約30us) + リセット(300us) でラッチ
+    sleep_us(WS_RESET_US + 30); //最後の1ワード(約30us) + リセット(WS_RESET_US) でラッチ
     ws_pio_release(pin);
 }
 
