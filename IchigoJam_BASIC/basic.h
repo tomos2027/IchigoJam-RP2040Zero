@@ -3921,7 +3921,9 @@ S_INLINE void command_ws_out() {
 // - The 38kHz carrier is already demodulated by HX1838.
 // - We only measure pulse widths.
 // - Repeat frame preserves previous bytes.
-// - Only interrupts are disabled during the timing-critical NEC decode section.
+// - Interrupts are kept enabled during the decode section to avoid breaking
+//   NTSC video output. NEC timing margins are wide enough to tolerate the
+//   IRQ jitter from NTSC DMA/60FPS timer interrupts.
 
 static int ir_wait_level_timeout(int gpio, int level, uint32_t timeout_us) {
     uint32_t st = time_us_32();
@@ -3946,7 +3948,8 @@ static int ir_measure_pulse_us(int gpio, int level, uint32_t timeout_us) {
     return (int)(time_us_32() - st);
 }
 
-//NECフレームデコード (リーダーLOW検出後、割り込み禁止中に呼ばれる)
+//NECフレームデコード (リーダーLOW検出後に呼ばれる)
+//割込みは有効のまま呼ばれる。NECのタイミングマージンが広いため、NTSC等の割込みジッタを許容する。
 //エラーコード: 0=成功 3=リーダーHIGH不一致 4=ビットLOW不一致 5=ビットHIGH不一致 6=コマンド逆数チェック不一致
 static int ir_decode_nec_after_leader_low(int gpio, uint8_t* b0, uint8_t* b1, uint8_t* b2, uint8_t* b3, uint8_t* rpt, uint8_t* mode) {
     int t_low, t_high;
@@ -4074,15 +4077,12 @@ S_INLINE void command_ir_in() {
     //フェーズ1: 通常のシステム状態でリーダーLOW (~9ms) を待つ
     {
         int t_low = ir_measure_pulse_us(gpio, 0, 15000);
-        if (t_low < 8000 || t_low > 10000) {
+        if (t_low < 8000 || t_low > 12000) {
             err = 2;
         } else {
-            //フェーズ2: リーダーLOW検出後、タイミングクリティカルな区間は割り込みを止めてデコードする
-            int save = save_and_disable_interrupts();
-
+            //フェーズ2: リーダーLOW検出後、割込みを有効のままNECフレームをデコードする
+            //NTSC映像を維持するため割込み禁止はしない。NECのマージンが広いため問題ない。
             err = ir_decode_nec_after_leader_low(gpio, &b0, &b1, &b2, &b3, &rpt, &mode);
-
-            restore_interrupts(save);
         }
     }
 
@@ -4147,7 +4147,9 @@ S_INLINE void command_ir_out() {
 	int repeat = token_option1(1);
 	IJB_ERR_CHK();
 
-	ir_nec_tx(port, frame, repeat);
+	if (ir_nec_tx(port, frame, repeat) < 0) {
+		command_error(ERR_ILLEGAL_ARGUMENT);
+	}
 }
 
 // ===== 4K版: ENV.IN コマンド (GivetakeJam_P実装を移植) =====

@@ -298,6 +298,7 @@ static int ir_nec_tx(int port, uint32_t frame /*LSBファースト: addr,~addr,c
 	if (sd_pin_reserved(pin)) {
 		return -1;//SD動作中の共有ピンは出力禁止
 	}
+	gpio_set_drive_strength(pin, GPIO_DRIVE_STRENGTH_12MA);
 	if (repeat < 1) {
 		repeat = 1;
 	}
