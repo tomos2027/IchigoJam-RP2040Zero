@@ -111,18 +111,21 @@ static void __noinline __not_in_flash_func(ws_bitbang_out) (uint8 pin, int nled,
     sleep_us(WS_RESET_US); //終端のリセット (ラッチ)
 }
 
+//基板内蔵WS2812 (GP16) のピン番号 (WS.LED 0 / 起動・診断表示で使用)
+static uint8 led_builtin_pin = 16;
+
 //WS.LED port,n[,repeat] (4K版: ポート選択式+拡張配列変数対応)
-//port: 1-6 (OUT1-6)、7=外部WS2812 (GP15)、8=LED (GP2)、n: LED数、repeat: 送信回数
-//色データは配列変数[0]〜[n*3-1]から読み込む (1LEDにつき3変数、[102]-[357]の拡張領域に対応し最大119LED)
+//port: 0=基板内蔵WS2812(GP16)、1-6=OUT1-6、7=外部WS2812(GP15)、8=LED(GP2)
+//n: LED数、repeat: 送信回数。色データは配列変数[0]〜[n*3-1]から読み込む (1LEDにつき3変数)
 static void __noinline ws_out(int port, int nled, int repeat) {
-    if (port < 1 || port > 8 || nled < 1 || repeat < 1) {
+    if (port < 0 || port > 8 || nled < 1 || repeat < 1) {
         return;
     }
     if (nled * 3 > IJB_SIZEOF_ARRAY_MAX) { //配列変数の範囲内に収める (最大119LED)
         nled = IJB_SIZEOF_ARRAY_MAX / 3;
     }
-    // 7=外部WS2812(GP15)、8=LED(GP2)、1-6=OUT1-6
-    uint8 pin = (port == 7) ? WS2812_PIN : ((port == 8) ? LED : out_pins[port - 1]);
+    // 0=基板内蔵WS2812(GP16)、7=外部WS2812(GP15)、8=LED(GP2)、1-6=OUT1-6
+    uint8 pin = (port == 0) ? led_builtin_pin : ((port == 7) ? WS2812_PIN : ((port == 8) ? LED : out_pins[port - 1]));
     if (sd_pin_reserved(pin)) {
         return;//SD動作中の共有ピン (OUT1/3/4) はWS2812出力禁止
     }
@@ -150,14 +153,12 @@ static void __noinline ws_out(int port, int nled, int repeat) {
     ws_pio_release(pin);
 }
 
-//===== 基板内蔵WS2812 (GP16) — ハートビート/診断表示専用 =====
-//LEDコマンド/OUT7はGP2を制御 (io.h)。WS.LED 7はGP15(外部WS2812)、WS.LED 8はGP2から出力する
-//GP16は本関数 (led_builtin) のみから制御される: timer()のハートビート、エラー時の高速点滅
+//===== 基板内蔵WS2812 (GP16) — 起動表示・診断表示用 =====
+//LEDコマンド/OUT7はGP2を制御 (io.h)。WS.LED 7はGP15(外部WS2812)、WS.LED 8はGP2、WS.LED 0はGP16
+//GP16は本関数群から制御される: 起動時の5回緑点滅、エラー時の高速赤点滅
 
-static uint8 led_builtin_pin = 16;// 基板内蔵WS2812 (GP16に固定)
-
-// 基板内蔵WS2812を1色で送信 (緑)
-static void __noinline __not_in_flash_func(led_builtin_send) (bool on) {
+// 指定GRB色で1LED送信 (bitbang、割込み禁止区間あり)
+static void __noinline __not_in_flash_func(led_builtin_color) (uint32_t grb) {
     uint8 pin = led_builtin_pin;
     gpio_init(pin);
     gpio_set_dir(pin, GPIO_OUT);
@@ -165,17 +166,36 @@ static void __noinline __not_in_flash_func(led_builtin_send) (bool on) {
     gpio_set_slew_rate(pin, GPIO_SLEW_RATE_FAST);
     gpio_put(pin, false);
     sleep_us(300); //リセット信号
-    uint32_t v = on ? 0x400000u : 0x000000u; // 緑 (GRB順: G=0x40, R=0x00, B=0x00)
     int save = save_and_disable_interrupts();
     for (int k = 23; k >= 0; k--) {
-        wsled_send_one_signal_1575(pin, (v >> k) & 0x01u);
+        wsled_send_one_signal_1575(pin, (grb >> k) & 0x01u);
     }
     restore_interrupts(save);
 }
 
-// 基板内蔵WS2812を制御 (ハートビート/診断用、LEDコマンドでは使用しない)
+// 緑で点灯/消灯
+static void led_builtin_green(bool on) {
+    led_builtin_color(on ? 0x400000u : 0x000000u); // GRB順: G=0x40
+}
+
+// 赤で点灯/消灯
+void led_builtin_red(bool on) {
+    led_builtin_color(on ? 0x004000u : 0x000000u); // GRB順: R=0x40
+}
+
+// 基板内蔵WS2812を制御 (旧互換、緑)
 void led_builtin(bool on) {
-    led_builtin_send(on);
+    led_builtin_green(on);
+}
+
+// 起動時: 緑を5回点滅 (約500ms ON / 500ms OFF、計約5秒) して消灯
+void led_builtin_boot_blink(void) {
+    for (int i = 0; i < 5; i++) {
+        led_builtin_green(true);
+        sleep_ms(500);
+        led_builtin_green(false);
+        sleep_ms(500);
+    }
 }
 
 #endif

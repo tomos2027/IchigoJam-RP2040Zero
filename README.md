@@ -9,7 +9,7 @@ A port of IchigoJam BASIC 1.6.1 (4K version) for the **Waveshare RP2040-Zero** b
 - **Multi-voice PLAY (up to 3 voices)** via AY-3-8910 (MSX-compatible) PSG emulation, with per-voice `V0-15` volume and `SOUND reg,val` register access (single-voice BEEP/PLAY stays clean hardware PWM)
 - **NTSC color text (test/development)**: `VIDEO 9` (32×24) / `VIDEO 10` (42×27) color modes with phyllosoma original 16-color `COLOR f[,b[,c]]` / `COL f[,b[,c]]`, `ATTR x,y,a`, `PAL n,v` / `PAL n,r,g,b` / `PAL(n)` / `PAL RESET`. Display quality is still being tuned.
 - SD card: [GivetakeJam_P](https://github.com/Canon-boy4/ichigojam-firm/tree/rp2350-16130) shared-pin design (GP6/7/8/10/11)
-- **LED / `WS.LED 8,n` on GP2** (WS2812) and **`WS.LED 7,n` on GP15** (external LED strip); the onboard WS2812 (GP16) is used for the heartbeat and error diagnostics only
+- **LED / `WS.LED 8,n` on GP2** (WS2812), **`WS.LED 7,n` on GP15** (external LED strip), and **`WS.LED 0,n` on the onboard WS2812 (GP16)**; GP16 is also used for boot blink and error diagnostics
 - **No back-pad pins (GP17-25) are used** — all functions on side edge pads
 
 ## Supported board
@@ -37,14 +37,14 @@ A port of IchigoJam BASIC 1.6.1 (4K version) for the **Waveshare RP2040-Zero** b
 | **SOUND** | **GP14** | | BEEP/PLAY/SOUND (changed from GP20) |
 | **LED / WS.LED 8** | **GP2** | side pad | `LED 1`/`LED 0` (plain GPIO), `WS.LED 8,n` (WS2812) |
 | **WS.LED 7** | **GP15** | side pad | external WS2812 data out |
-| (onboard WS2812) | GP16 | onboard | heartbeat (green, ~1Hz) + error diagnostics only |
+| (onboard WS2812) | GP16 | onboard | boot 5 green blinks, `WS.LED 0,n`, red fast blink on error |
 | **IN2** | GP26 | | **ADC0** analog |
 | **IN1** | GP27 | | **ADC1** analog |
 | **BTN** | GP28 | | **ADC2** |
 
-> **WS2812 note**: `WS.LED 7,n` outputs on **GP15**, `WS.LED 8,n` on **GP2** (3.3V logic). A 5V WS2812 strip requires a level shifter (e.g. 74AHCT125) and a common GND with a separate 5V supply. Data order is **GRB**.
+> **WS2812 note**: `WS.LED 0,n` uses the **onboard GP16**, `WS.LED 7,n` outputs on **GP15**, `WS.LED 8,n` on **GP2** (3.3V logic). A 5V WS2812 strip requires a level shifter (e.g. 74AHCT125) and a common GND with a separate 5V supply. Data order is **GRB**.
 >
-> Quick test (1 LED, red): `CLV:LET[0],0,40,0:WS.LED 7,1`
+> Quick test (1 LED, red): `CLV:LET[0],0,40,0:WS.LED 0,1` (onboard) / `WS.LED 7,1` (GP15)
 
 ## Building
 

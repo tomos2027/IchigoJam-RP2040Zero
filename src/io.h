@@ -6,7 +6,7 @@
 //側面エッジパッド: GP0-15 + GP26-28 (+電源/GND)
 //裏面パッド: GP17-25 (本機では未使用)
 //GP6/7/8/10/11はSDカード (SPI1) と共有 (SDON中はOUT/PWM/WS.LED/IR.IN/IR.OUTがブロックされる)
-//GP16は基板内蔵WS2812 (ハートビート/診断専用、ext_ws.hのled_builtinで駆動)
+//GP16は基板内蔵WS2812 (WS.LED 0 / 起動・エラー診断用、ext_ws.hのled_builtinで駆動)
 #define LED 2   // 側面パッド (LEDコマンド/OUT7/WS.LED 8で使用、通常GPIO)
 #define WS2812_PIN 15 // 側面パッド (WS.LED 7の外部WS2812データ出力)
 #define BTN 28  // 側面パッド (ADC2)  GNDとの間にボタンを接続 (内部プルアップ)
@@ -21,7 +21,7 @@
 #define OUT5 12 // 側面パッド (IchigoJam_PのGP22から変更: 裏面パッド不使用のため)
 #define OUT6 13 // 側面パッド (IchigoJam_PのGP21から変更: 裏面パッド不使用のため)
 #define SOUND 14 // 側面パッド (sound.hで定義、IchigoJam_PのGP20から変更)
-//GP16: 基板内蔵WS2812 (ハートビート/診断専用、LEDコマンドでは使用しない)
+//GP16: 基板内蔵WS2812 (WS.LED 0 / 起動・エラー診断用、LEDコマンドでは使用しない)
 
 #define IO_PIN_NUM 11
 
@@ -48,7 +48,7 @@ static inline float pwm_clkdiv_for_48mhz(void) {
 }
 
 void sound_reconfig();//sound.hで定義 (io.hより後ろにincludeされるため前方宣言)
-void led_builtin(bool on);//ext_ws.hで定義 (基板内蔵WS2812=GP16をハートビート/診断表示に使う、LEDコマンドはGP2)
+void led_builtin(bool on);//ext_ws.hで定義 (基板内蔵WS2812=GP16を起動/エラー表示に使う、LEDコマンドはGP2)
 
 static uint8 in_pins[] = { IN1, IN2, IN3, IN4, OUT1, OUT2, OUT3, OUT4, BTN, OUT5, OUT6 };
 static uint8 out_pins[] = { OUT1, OUT2, OUT3, OUT4, OUT5, OUT6, LED, IN1, IN2, IN3, IN4 };

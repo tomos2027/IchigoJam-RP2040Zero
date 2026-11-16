@@ -193,21 +193,15 @@ bool timer(repeating_timer_t* rt) {
             TVRAM[IJ_ATTROFFSET + i] = 0x07;
             TVRAM[ATTROFFSET + i] = 0x07;
         }
-        //エラー時は内蔵WS2812を高速点滅させて知らせる
+        //エラー時は内蔵WS2812を赤で高速点滅させて知らせる
         static bool diag_led;
         if ((frames & 7) == 0) {
             diag_led = !diag_led;
-            led_builtin(diag_led);
+            led_builtin_red(diag_led);
         }
      } else {
         vram_to_tvram_all(_g.cursorflg);
-        //ハートビート: 内蔵WS2812 (GP16) を約1Hzで緑点滅 (システム生存確認)
-        //LEDコマンドはGP2を制御 (GP16とは独立)
-        static bool heartbeat = true;
-        if ((frames & 31) == 0) {
-            heartbeat = !heartbeat;
-            led_builtin(heartbeat);
-        }
+        //通常時は内蔵WS2812 (GP16) は消灯。ハートビートは廃止 (WS.LED 0 / 起動・エラー表示専用)
     }
     //中でsleep_ms()が呼ばれたときに止まるので、本来タイマーの中でtuh_task()を呼び出してはいけないが、なぜか動いている
     //pico-sdk/lib/tinyusb/src/osal/osal_pico.h　のosal_task_delay()のsleepをwhileループに置き換えると解決する
@@ -216,16 +210,16 @@ bool timer(repeating_timer_t* rt) {
     return true;
 }
 
-//ハードフォルト時に内蔵WS2812を高速点滅させる (画面が使えなくても状態を通知する、診断用)
+//ハードフォルト時に内蔵WS2812を赤で高速点滅させる (画面が使えなくても状態を通知する、診断用)
 //ウォッチドッグを止めないと8秒後に再起動して点滅が消えてしまう
 void isr_hardfault(void) {
     watchdog_disable();
     bool on = true;
-    led_builtin(true);
+    led_builtin_red(true);
     for (;;) {
         busy_wait_us(60000);//約8Hz点滅
         on = !on;
-        led_builtin(on);
+        led_builtin_red(on);
     }
 }
 
@@ -273,8 +267,8 @@ void pico_init() {
     gpio_pull_up(UART_TX_PIN);
     gpio_pull_up(UART_RX_PIN);
 
-    //ハートビートはtimer()で開始されるため、ここでは点灯しない
-    //LEDコマンドはGP2 (io.h) を制御、GP16はハートビート専用
+    //内蔵WS2812 (GP16) は起動・エラー表示専用のため、ここでは点灯しない
+    //LEDコマンドはGP2 (io.h) を制御
 
     // init host stack on configured roothub port
     tuh_init(BOARD_TUH_RHPORT);

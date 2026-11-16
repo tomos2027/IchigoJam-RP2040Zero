@@ -130,7 +130,7 @@ static int IJB_wait(int n, int active) {
         enterDeepSleep(n / 60);
         //1秒未満は普通のsleepで誤魔化す
         sleep_us((n % 60) / 60.0 * 1000000);
-        led_builtin(true);
+        led_builtin(false);
         is_deep_sleeping = false;
     }
     return 0;
