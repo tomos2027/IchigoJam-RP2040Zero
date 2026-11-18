@@ -17,6 +17,21 @@ project(IchigoJam_RP2040Zero)
 # initialize the Raspberry Pi Pico SDK
 pico_sdk_init()
 
+# 60FPSタイマー割り込み内からtuh_task()を呼ぶため、TinyUSBのosal_task_delayは
+# busy loop化パッチ (patches/tinyusb_osal_task_delay.patch) の適用が必須。
+# 未適用のままビルドするとISR内sleep_msで異常動作するため、ここで検知して停止する。
+set(TINYUSB_OSAL "${PICO_SDK_PATH}/lib/tinyusb/src/osal/osal_pico.h")
+if(EXISTS "${TINYUSB_OSAL}")
+    file(READ "${TINYUSB_OSAL}" TINYUSB_OSAL_CONTENT)
+    string(FIND "${TINYUSB_OSAL_CONTENT}" "msec * 1000" TINYUSB_PATCH_POS)
+    if(TINYUSB_PATCH_POS EQUAL -1)
+        message(FATAL_ERROR
+            "TinyUSBのosal_pico.hに patches/tinyusb_osal_task_delay.patch が適用されていません\n"
+            "(60FPSタイマー割り込み内からtuh_task()を呼ぶためパッチ適用は必須です)\n"
+            "適用方法: cd ${PICO_SDK_PATH}/lib/tinyusb && git apply ${CMAKE_CURRENT_LIST_DIR}/patches/tinyusb_osal_task_delay.patch")
+    endif()
+endif()
+
 # 本機はNTSCコンポジット出力専用 (HDMI/DVI非対応のためPicoDVI等のDVIライブラリは不要)
 # NTSCドライバは独自実装 (src/video/ntscv、MIT) — 旧ドライバは互換shim経由で利用
 add_executable(IchigoJam_RP2040Zero

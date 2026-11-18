@@ -108,6 +108,14 @@ static void __noinline __not_in_flash_func(ws_bitbang_out) (uint8 pin, int nled,
         }
     }
     restore_interrupts(save);
+    //長い割込み禁止中はDMAリングの再構築 (compose) が止まり、復帰後の
+    //合流処理では1スロットしか進められずarm_nextが実再生位置からずれる。
+    //ずれは自己修復しないため (VSYNCが内容に対してずれた位置に合成され、
+    //映像がロールしたまま次のntscv_initまで復旧しない)、ここでDMAリングを
+    //フィールド先頭から再構成する (ntscv_resync: PWM/DMAを止めないソフトリセット)
+    if (ntsc_active()) {
+        ntscv_resync();
+    }
     sleep_us(WS_RESET_US); //終端のリセット (ラッチ)
 }
 

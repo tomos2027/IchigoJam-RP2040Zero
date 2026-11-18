@@ -180,7 +180,12 @@ static void process_kbd_report(hid_keyboard_report_t const* report) {
         lp.last_char = 0;
         return;
     }
+    //time_us_64()の32bitローラップ瞬間に優先度の高い28kHz音声割り込みで torn read が
+    //起こるのを防ぐ (putc_long_press_key側の読み出しと同じ保護。未保護だと time が
+    //後戻りし、長押しリピートが誤発する)
+    int save = save_and_disable_interrupts();
     lp.last_key_report_time = time_us_64();
+    restore_interrupts(save);
     bool no_keycode = true;
     bool should_reset_last_char = true;
     bool const is_ctrl = report->modifier & (KEYBOARD_MODIFIER_LEFTCTRL | KEYBOARD_MODIFIER_RIGHTCTRL);

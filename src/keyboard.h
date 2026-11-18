@@ -72,11 +72,17 @@ STATIC void put_chr(char c) {
     }
 }
 
+//keybufはメイン (key_getKey) とISR (UART受信、60Hzタイマー内のUSBキーボード処理・
+//長押しリピート) の両コンテキストから読み書きするため、操作は割り込み禁止で行う
+//(key_getKeyのカウンタ減算+前詰め処理の途中にISRのkey_pushcが割り込むと
+// キューが破壊され、キー入力の欠落・重複が起こるため)
 void key_pushc(char c) {
+    int save = save_and_disable_interrupts();
     if (*keybuf < KEY_BUF_LEN) {
         (*keybuf)++;
         keybuf[(uint8)*keybuf] = c;
     }
+    restore_interrupts(save);
 }
 
 void key_push(char* s) { // for function keys
@@ -89,18 +95,23 @@ void key_push(char* s) { // for function keys
 }
 
 int key_getKey() {
+    int save = save_and_disable_interrupts();
     if (!*keybuf) {
+        restore_interrupts(save);
         return -1; // 1.2b19
     }
     int res = keybuf[1];
     (*keybuf)--;
     for (uint8 i = 0; i < *keybuf; i++)
         keybuf[i + 1] = keybuf[i + 2];
+    restore_interrupts(save);
     return res;
 }
 
 void key_clearKey() {
+    int save = save_and_disable_interrupts();
     *keybuf = 0;
+    restore_interrupts(save);
 }
 
 void set_uart_bps() {
