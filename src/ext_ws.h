@@ -123,10 +123,11 @@ static void __noinline __not_in_flash_func(ws_bitbang_out) (uint8 pin, int nled,
 static uint8 led_builtin_pin = 16;
 
 //WS.LED port,n[,repeat] (4K版: ポート選択式+拡張配列変数対応)
-//port: 0=基板内蔵WS2812(GP16)、1-6=OUT1-6、7=外部WS2812(GP15)、8=LED(GP2)
+//port: 0=基板内蔵WS2812(GP16)、1-6=OUT1-6、7=外部WS2812(GP15)、8=LED(GP2)、9-11=OUT9-11 (IN2/IN3/IN4)
+//(OUT8=IN1のみWS.LEDからは指定不可: 8がLED(OUT7)に割り当てられているため)
 //n: LED数、repeat: 送信回数。色データは配列変数[0]〜[n*3-1]から読み込む (1LEDにつき3変数)
 static void __noinline ws_out(int port, int nled, int repeat) {
-    if (port < 0 || port > 8 || nled < 1 || repeat < 1) {
+    if (port < 0 || port > 11 || nled < 1 || repeat < 1) {
         return;
     }
     if (nled * 3 > IJB_SIZEOF_ARRAY_MAX) { //配列変数の範囲内に収める (最大119LED)

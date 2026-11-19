@@ -119,14 +119,14 @@ WS.LED 0,1        ' 消灯
 | **I2C0 SDA/SCL** | GP4/5 | | I2CR/I2CW、外部EEPROM、ENV.IN |
 | **UART TX/RX** | GP0/1 | | UART命令 (115200bps)、シリアル出力 |
 
-- **WS.LED** `WS.LED port,n[,repeat]` はポート0〜8を指定 (**0=基板内蔵WS2812(GP16)**、1-6=OUT1-6、**7=GP15の外部WS2812**、**8=GP2のWS2812**)。`repeat` を指定するとn個分のパターンをリセットなしで連続送信し、テープの長さ分タイル状に繰り返します (**LED 1個では見た目は変化しません**)。**SDON中はポート1/3/4 (SD共有ピン) がブロックされます**
+- **WS.LED** `WS.LED port,n[,repeat]` はポート0〜11を指定 (**0=基板内蔵WS2812(GP16)**、1-6=OUT1-6、**7=GP15の外部WS2812**、**8=GP2のWS2812**、9-11=OUT9-11 (IN2/IN3/IN4))。`repeat` を指定するとn個分のパターンをリセットなしで連続送信し、テープの長さ分タイル状に繰り返します (**LED 1個では見た目は変化しません**)。OUT8 (IN1) のみWS.LEDからは指定できません (8がLED=OUT7に割り当てられているため)。**SDON中はポート1/3/4/10/11 (SD共有ピン) がブロックされます**
 - **PWM** はOUT1〜OUT6。**SDON中はポート1/3/4がブロックされます**
 - **IR.OUT** はOUT1〜OUT6 (38kHzキャリア出力)。**SDON中はポート1/3/4がブロックされます**。IR.INポート (IN1-4) とは番号体系が別なので注意
 - **ANA()** はIN1 (ADC1) / IN2 (ADC0) / BTN (ADC2) の**アナログ値 (0-1023)** を返します
 
 > **WS2812 (`WS.LED 0,n` = GP16内蔵、`WS.LED 7,n` = GP15、`WS.LED 8,n` = GP2)**: いずれも3.3V論理出力です。5V駆動のWS2812テープはVIHが約3.5Vのため、**74AHCT125等のレベルシフタ**と**GND共通・5V別電源**が必要です。データ順は**GRB**です。
 >
-> 1LEDの動作確認 (赤): `CLV:LET[0],0,40,0:WS.LED 0,1` (GP16内蔵) / `WS.LED 7,1` (GP15) / `WS.LED 8,1` (GP2)
+> 1LEDの動作確認 (赤): `CLV:LET[0],0,40,0:WS.LED 0,1` (GP16内蔵) / `WS.LED 7,1` (GP15) / `WS.LED 8,1` (GP2) / `WS.LED 11,1` (GP7=IN4側面パッド、SDOFF時のみ)
 
 ### 3.2 パッド配置
 
@@ -134,7 +134,7 @@ RP2040-Zeroのパッドは基板上に**信号名 (GP番号・電源名)** で�
 
 | 辺 | パッド (並び順) | 本機での主な機能 |
 |---|---|---|
-| 右長辺 (USB側から下へ) | GP0, GP1, GP2, GP3, GP4, GP5, GP6, GP7 | GP0/1=UART TX/RX、**GP2=LED / WS.LED 8**、GP3=NTSC映像、GP4/5=I2C SDA/SCL、GP6=IN3/SD CS、GP7=IN4/SD検出 |
+| 右長辺 (USB側から下へ) | GP0, GP1, GP2, GP3, GP4, GP5, GP6, GP7 | GP0/1=UART TX/RX、**GP2=LED / WS.LED 8**、GP3=NTSC映像、GP4/5=I2C SDA/SCL、GP6=IN3 (=OUT10/WS.LED 10)/SD CS、GP7=IN4 (=OUT11/WS.LED 11)/SD検出 |
 | 下短辺 (左から右へ) | GP14, GP13, GP12, GP11, GP10, GP9, GP8 | GP14=SOUND、GP8=OUT1/SD MISO、GP9=OUT2、GP10=OUT3/SD CLK、GP11=OUT4/SD MOSI、GP12=OUT5、GP13=OUT6 |
 | 左長辺 (USB側から下へ) | 5V (VBUS), GND, 3V3, GP29, GP28, GP27, GP26, GP15 | GP29=未使用 (ADC3)、GP28=BTN (ADC2)、GP27=IN1 (ADC1)、GP26=IN2 (ADC0)、**GP15=WS.LED 7 (外部WS2812)** |
 
@@ -151,8 +151,8 @@ RP2040-Zeroのパッドは基板上に**信号名 (GP番号・電源名)** で�
 | OUT1 (=WS.LED 1) | GP8 | SD MISO |
 | OUT3 (=WS.LED 3) | GP10 | SD CLK |
 | OUT4 (=WS.LED 4) | GP11 | SD MOSI |
-| IN3 (IR.IN 3) | GP6 | SD CS |
-| IN4 (IR.IN 4) | GP7 | SD検出 |
+| IN3 (=OUT10, WS.LED 10, IR.IN 3) | GP6 | SD CS |
+| IN4 (=OUT11, WS.LED 11, IR.IN 4) | GP7 | SD検出 |
 
 `OUT 2`、`OUT 5`、`OUT 6`、`IN1`、`IN2`、`BTN`、`SOUND`、`LED`、I2Cは**SDON中も通常どおり使用できます**。
 
