@@ -128,6 +128,7 @@ static int oled_draw_str(int x, int y_baseline, const char* s) {
         if (c < 0x20 || c > 0x7E) c = 0x3F; // '?'
         const OLED_Char* ch = &tbl[c - 0x20];
         int top = y_baseline - (ch->h + ch->gy); // u8g2: target_y -= (h + gy)
+        if (top < 0) top = 0; // ベースラインがフォント高さ未満でも上端に表示 (y=0等で完全に消えないようクランプ)
         int left = x + ch->gx;                    // u8g2: target_x += gx
         for (int col = 0; col < ch->w; col++) {
             uint16_t bits = ch->data[col];

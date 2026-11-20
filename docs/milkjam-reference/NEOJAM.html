@@ -213,7 +213,7 @@ a {
 <tr><td>ENV.IN [n] / エンブ・イン</td><td>環境センサー (AHT20/BMP280互換 0x38/0x76-77) から温度・湿度・気圧を読み配列[n]以降6個へ格納する（[n]=温度0.1℃、[n+1]=湿度0.1%RH、[n+2]=気圧0.1hPa、[n+3]=BMP280温度0.1℃、[n+4]=エラー、[n+5]=状態フラグ (bit0:AHT20 bit1:BMP280)。4K版拡張）</td><td>ENV.IN [100]:?[100]</td></tr>
 <tr><td>IOT.IN() / アイ・オー・ティー・イン</td><td>I2C接続したsakura.ioモジュール (アドレス79) の受信キュー先頭のデータを返す（受信データがない時は0。4K版拡張）</td><td>A=IOT.IN()</td></tr>
 <tr><td>IOT.OUT 数 / アイ・オー・ティー・アウト</td><td>I2C接続したsakura.ioモジュール (アドレス79) へ値を即時送信する（IOT.OUT 番地,長さ{,フラッシュ} で仮想メモリの内容を8バイト単位で送信、フラッシュ0以外でモジュール内フラッシュにも書込。4K版拡張）</td><td>IOT.OUT 1</td></tr>
-<tr><td>EJ "コマンド"{,"引数"} / イージェイ</td><td>I2C接続したOLED (SSD1306 128x64・アドレス0x3C、GP4=SDA/GP5=SCL/3V3) に文字を表示する（Milkjam IOTPAD互換。OLEDON=ダイレクトモード開始、OLEDOFF=終了、OLEDCLEAR=クリア、OLEDCUR x,y=カーソル移動 (ピクセル・yはベースライン)、OLEDPRINT "文字"=表示 (別名OLED)、OLEDFONT 0-4=フォント選択 5x7/6x12/8x13/9x15/10x20 (別名OLEDSIZE、flashに保存)、GETFONT=照会、OLEDPAGE n=ステータスページ切替 1:システム/2:ENV.IN/3:入力 (別名NEXTSCR)。引用符省略可。関数形式 EJ("OLEDPAGE") はページ番号を返す）</td><td>EJ "OLEDON":EJ "OLEDPRINT","HI"</td></tr>
+<tr><td>EJ コマンド{ 引数} / イージェイ</td><td>I2C接続したOLED (SSD1306 128x64・アドレス0x3C、GP4=SDA/GP5=SCL/3V3) に文字を表示する（コマンド名と引数の区切りはスペース、引数同士はカンマ。引用符は不要。OLEDON=ダイレクトモード開始、OLEDOFF=終了、OLEDCLEAR=クリア、OLEDCUR x,y=カーソル移動 (ピクセル・yはベースライン。フォント高さ以上を指定: 既定8x13なら1行目=13)、OLEDPRINT 文字=表示 (別名OLED。スペース・記号入りは引用符で囲む)、OLEDFONT 0-4=フォント選択 5x7/6x12/8x13/9x15/10x20 (別名OLEDSIZE、flashに保存)、GETFONT=照会、OLEDPAGE n=ステータスページ切替 1:システム/2:ENV.IN/3:入力 (別名NEXTSCR)。関数形式 ?EJ(OLEDPAGE) はページ番号を返す）</td><td>EJ OLEDON:EJ OLEDPRINT HI</td></tr>
 
 <tr class="sec"><th colspan="3">NEOJAM拡張 — その他</th></tr>
 <tr><td>KBD 数 / キーボード</td><td>USBキーボードの配列を切り替える（0=英語 (US) 配列、1=日本語 (JIS) 配列。設定はflashに保存され再起動後も維持。KBD 1 では「変換」キー (Ctrl+Space) でローマ字かな入力モード）</td><td>KBD 1</td></tr>

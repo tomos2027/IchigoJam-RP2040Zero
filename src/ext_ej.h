@@ -101,7 +101,9 @@ static void ej_oled_exec(const char* cmd, const char* arg, char* resp, int resp_
         if (oled_ok) {
             oled_direct = true;
             oled_cursor_x = 0;
-            oled_cursor_y = 0;
+            //カーソルyはベースラインのため0にするとグリフが画面上端の外に消える。
+            //1行目のベースライン (y=フォント高さ+y補正) へ設定して即座に見えるようにする
+            oled_cursor_y = oled_line_y(0);
             oled_buf_clear();
             oled_buf_send();
             EJ_RESP("OLED Direct ON");
@@ -114,7 +116,8 @@ static void ej_oled_exec(const char* cmd, const char* arg, char* resp, int resp_
         if (oled_ok) {
             oled_buf_clear();
             oled_buf_send();
-            oled_cursor_x = oled_cursor_y = 0;
+            oled_cursor_x = 0;
+            oled_cursor_y = oled_line_y(0); // 1行目のベースライン (OLEDONと同一)
             EJ_RESP("OLED Cleared");
         } else { EJ_RESP("OLED Not Found"); }
     } else if (strcmp(cmd, "OLEDCUR") == 0) {
@@ -198,11 +201,14 @@ static void ej_oled_exec(const char* cmd, const char* arg, char* resp, int resp_
     #undef EJ_RESP
 }
 
-//EJ "CMD"[,"ARG"] — コマンド形式 (応答を画面に表示)
+//EJ CMD{ 引数} — コマンド形式 (応答を画面に表示)
+//コマンド名と引数の区切りはスペース、引数同士の区切りはカンマ
+//例: EJ OLEDCUR 0,20 / EJ OLEDPRINT HELLO / EJ OLEDPRINT "HELLO WORLD" / EJ OLEDPAGE
+//※従来のカンマ形式 (EJ OLEDCUR,0,20) も互換のため引き続き動作する (非公開)
 S_INLINE void command_ej() {
     //スタックオーバーフロー防止: バッファはstatic化 (Milkjam準拠)
     static char cmd[EJ_CMD_MAX];
-    //コマンド名: 引用符付き/引用符なし両対応 (引用符なしは大文字化して読む。カンマで停止)
+    //コマンド名: 引用符付き/引用符なし両対応 (引用符なしは大文字化して読む。スペース・カンマで停止)
     token_get_ej_arg(cmd, sizeof cmd, true, false);
     if (!cmd[0]) {
         command_error(ERR_SYNTAX_ERROR);
@@ -211,10 +217,17 @@ S_INLINE void command_ej() {
     static char arg[EJ_ARG_MAX];
     arg[0] = 0;
     Token t; Token_get(t);
-    if (t.code == TOKEN_COMMA) {
-        token_get_ej_arg(arg, sizeof arg, false, true);//値引数: 小文字を保持・カンマ可
+    if (t.code == TOKEN_NULL || t.code == TOKEN_ELSE) {
+        token_back(); // 引数なし (EJ OLEDON / EJ OLEDPAGE)
+    } else if (t.code == TOKEN_STRING) {
+        token_getstr_copy(arg, sizeof arg, false); // 引用符付き引数 (スペース・記号入り表示用)
+    } else if (t.code == TOKEN_COMMA) {
+        token_get_ej_arg(arg, sizeof arg, false, true); // 従来のカンマ形式 (互換): 小文字保持・カンマ可
     } else {
+        //スペース区切り引数 (lasttokenはスペース読み飛ばし後のトークン先頭を指すため
+        //token_back → raw再読みで "0,20" 等の引数全体を取得できる)
         token_back();
+        token_get_ej_arg_raw(arg, sizeof arg, false, true);
     }
     token_end();
     IJB_ERR_CHK();

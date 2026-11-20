@@ -5,43 +5,50 @@ NEOJAM
 OLED (SSD1306 128x64) を制御します。
 
 [ コマンド 書式 ]
-EJ "<コマンド>"{,"<引数>"}
+EJ <コマンド>{ <引数>}
 EJ(<コマンド>)
 
 [ 例 ]
-10 EJ "OLEDON"
-20 EJ "OLEDCUR",0,20
-30 EJ "OLEDPRINT","HELLO!"
-40 ?EJ("OLEDPAGE")
+10 EJ OLEDON
+20 EJ OLEDCUR 0,20
+30 EJ OLEDPRINT HELLO
+40 ?EJ(OLEDPAGE)
 
 [ 解説 ]
 I2C 接続した SSD1306 OLED (128x64・アドレス 0x3C) に
 文字を表示します (Milkjam IOTPAD 互換)。
+コマンド名と引数の区切りはスペース、引数同士の
+区切りはカンマです (引用符は不要)。
 I2C バスは GP4 (SDA) / GP5 (SCL) で、電源は 3V3 を
 使用して下さい (5V 不可)。
 起動時に OLED の有無を自動検出し、あればシステム情報
 ページを表示します。未接続時は OLED Not Found と応答します。
 
-引用符は省略できます (EJ OLEDCUR,0,20 / EJ OLEDPRINT,Hello)。
-
-    OLEDON     ダイレクトモード開始 (画面クリア・カーソル 0,0)
+    OLEDON     ダイレクトモード開始 (画面クリア・カーソルは
+               1 行目の先頭)
     OLEDOFF    ダイレクトモード終了 (ステータスページへ戻る)
-    OLEDCLEAR  画面クリア (ダイレクトモード維持)
-    OLEDCUR    カーソル移動 EJ OLEDCUR,x,y (ピクセル単位・
-               y はベースライン)
-    OLEDPRINT  文字を表示 EJ OLEDPRINT,"文字" (別名 OLED。
+    OLEDCLEAR  画面クリア (ダイレクトモード維持・カーソルは
+               1 行目の先頭)
+    OLEDCUR    カーソル移動 EJ OLEDCUR x,y (ピクセル単位・
+               y はベースライン。フォントの高さ以上を指定
+               して下さい。既定 8x13 なら 1 行目は y=13)
+    OLEDPRINT  文字を表示 EJ OLEDPRINT 文字 (別名 OLED。
                ダイレクトモード中のみ。表示後カーソルは
                実測幅だけ進みます)
-    OLEDFONT   フォント選択 EJ OLEDFONT,n (別名 OLEDSIZE)
+    OLEDFONT   フォント選択 EJ OLEDFONT n (別名 OLEDSIZE)
                0:5x7 / 1:6x12 / 2:8x13 (既定) / 3:9x15 / 4:10x20
                選択は flash に保存されます。引数なしで照会
     GETFONT    現在のフォントを照会
-    OLEDPAGE   ステータスページ切替 EJ OLEDPAGE,n (別名 NEXTSCR)
+    OLEDPAGE   ステータスページ切替 EJ OLEDPAGE n (別名 NEXTSCR)
                1: システム情報 (VER/FREE/フォント)
                2: 環境センサー (ENV.IN と同一の取得経路)
                3: 入力状態 (IN/BTN/ANA)
                引数なしで次のページへ
 
-関数形式 EJ("OLEDPAGE") は現在のページ番号を返します。
+OLEDPRINT の表示文字は英数字と - _ . @ が使えます。
+スペースや記号を含む文字列だけ引用符で囲んで下さい
+(EJ OLEDPRINT "HELLO WORLD")。
+
+関数形式 ?EJ(OLEDPAGE) は現在のページ番号を返します。
 表示できる文字は半角 ASCII のみです (全角は ? になります)。
 未対応のコマンドは Unknown:<コマンド名> と応答します。
