@@ -298,6 +298,7 @@ void ichigojam_init() {
     sound_init();
     uart_init_IJ();
     i2c0_init();
+    oled_probe_init(); // SSD1306 OLED初期化 (EJ OLED、未接続時はNACKで即スキップ)
 
     int sleepflg = getSleepFlag();//起動時ボタンを押していたらtrue
     sleepflg |= is_arun();//プログラムの先頭が@ARUNならtrue

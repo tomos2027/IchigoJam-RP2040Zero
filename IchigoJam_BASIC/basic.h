@@ -117,6 +117,27 @@ static void iot_out2(int ad, int len, int flash);
 #endif
 
 static void ws_out(int port, int nled, int reapeat);
+static void ws_data_reset(); // WS.MODE/バッファのリセット (CLV実行時と起動時、下記で定義)
+
+//===== WS2812 NeoMatrix データモード (WS.MODE) =====
+//WS.LEDが読み込むピクセルデータの形式と開始位置。CLV実行時と起動時にリセットされる
+//(basic_clearVarsからws_data_reset()を呼ぶ。メインコンテキストのみで読み書きするため非volatile)
+#define WS_MODE_RGB888  0 // 配列3要素/1px: [o]=G [o+1]=R [o+2]=B (従来互換・既定)
+#define WS_MODE_RGB332  1 // 配列1要素/1px: RGB332 (RRRGGGBB)
+#define WS_MODE_RGB332X2 2 // 配列1要素/2px: 下位バイト=1個目、上位バイト=2個目 (RGB332)
+#define WS_MODE_BUFFER  3 // 専用バッファ (GRB 3バイト/px、WS.PUTで書込み)
+#define WS_BUFFER_BYTES 8192  // 専用バッファサイズ (8KB)
+#define WS_BUFFER_PIXELS (WS_BUFFER_BYTES / 3) // 2730px
+static int ws_data_mode = WS_MODE_RGB888;    // ピクセル格納モード (0-3)
+static int ws_data_offset = 0;               // 読み込み開始位置 (mode0-2: 配列インデックス0-357 / mode3: バッファpx位置0-2729)
+static uint8_t ws_matrix_buf[WS_BUFFER_BYTES]; // mode3専用バッファ (GRB 3バイト/px)
+
+//WS.MODE/バッファのリセット (CLV実行時と起動時にbasic_clearVarsから呼ばれる)
+static void ws_data_reset() {
+    ws_data_mode = WS_MODE_RGB888;
+    ws_data_offset = 0;
+    memset(ws_matrix_buf, 0, sizeof ws_matrix_buf);
+}
 
 // util -----------------------------------------------------
 
@@ -421,6 +442,11 @@ S_INLINE void command_ws_out();
 S_INLINE void command_ir_in(); // NEC赤外線受信 IR.IN port,[n] (4K版、GivetakeJam_P準拠)
 S_INLINE void command_ir_out(); // NEC赤外線送信 IR.OUT port,data[,repeat] / IR.OUT port,[n][,repeat]
 S_INLINE void command_env_in(); // AHT20+BMP280環境センサー ENV.IN [n] (4K版、GivetakeJam_P準拠)
+S_INLINE void command_ej(); // EJ "CMD"[,"ARG"] コマンド (OLED制御、Milkjam IOTPAD互換)
+S_INLINE int func_ej(); // EJ("CMD") 関数 (数値結果を返す、Milkjam IOTPAD互換)
+S_INLINE void command_ws_mode(); // WS.MODE mode{,offset} (WS2812ピクセル格納モード)
+S_INLINE void command_ws_put(); // WS.PUT idx,R,G,B (専用バッファへ1px書込み)
+S_INLINE int func_rgb(); // RGB(r,g,b) 関数 (RGB332値を返す)
 static int ir_port_to_gpio(int port); // BASICのINポート番号→GPIO番号 (io.hで定義)
 static int ir_nec_tx(int port, uint32_t frame, int repeat); // NEC赤外線送信エンジン (io.hで定義)
 
@@ -461,6 +487,7 @@ static int16 token_expression5();
 static void basic_clearVars() {
 	memclear((uint8*)var, (IJB_SIZEOF_ARRAY + IJB_SIZEOF_VAR) * 2);
 	memclear((uint8*)var2, (IJB_SIZEOF_ARRAY_MAX - IJB_SIZEOF_ARRAY) * 2); // 拡張配列変数 [102]-[357] もクリア (4K版)
+	ws_data_reset(); // WS.MODE (モード0/オフセット0) と専用バッファもクリア (WS2812 NeoMatrix)
 }
 S_INLINE void basic_init() {
 	basic_clearVars();
@@ -645,6 +672,9 @@ int basic_execute(char* commandline) {
 			case TOKEN_IR_IN:	command_ir_in();							break; // 4K版 (GivetakeJam_P準拠)
 			case TOKEN_IR_OUT:	command_ir_out();							break; // NEC赤外線送信: IR.OUT port,data[,repeat] / IR.OUT port,[n][,repeat]
 			case TOKEN_ENV_IN:	command_env_in();							break; // 4K版 (GivetakeJam_P準拠)
+			case TOKEN_EJ:		command_ej();								break; // EJ "CMD"[,"ARG"] (OLED制御、Milkjam IOTPAD互換)
+			case TOKEN_WS_MODE:	command_ws_mode();							break; // WS.MODE mode{,offset} (WS2812 NeoMatrix)
+			case TOKEN_WS_PUT:	command_ws_put();							break; // WS.PUT idx,R,G,B (専用バッファへ1px書込み)
 			default:
 				#ifdef USE_EXTENSION
 				if (extension_command(token.code)) {
@@ -1682,6 +1712,12 @@ static int16 token_expression5() {
 			return iot_in();
 		}
 		#endif
+		case TOKEN_EJ_FUNC: {
+			return func_ej(); // EJ("CMD") 関数形式 (OLED制御、Milkjam IOTPAD互換)
+		}
+		case TOKEN_RGB: {
+			return func_rgb(); // RGB(r,g,b) → RGB332 (WS.MODE 1/2・COLOR用)
+		}
 		default: {
 			command_error(ERR_SYNTAX_ERROR);
 			break;
@@ -3374,10 +3410,16 @@ S_INLINE void command_color() {
 		IJB_ERR_CHK();
 	}
 	token_end();
-	if (color[0] < 0 || color[0] > 15 || color[1] > 15 || color[2] > 15) {
+	//引数は0-255を許容: 0-15=パレット番号 (従来互換)、16-255=RGB332値
+	//(RGB(r,g,b)の戻り値) として標準パレット16色の最近傍色へ変換する
+	//(既定パレットは純色+半輝度のRGB332構成のため COLOR RGB(255,0,0) → 赤 に一致)
+	if (color[0] < 0 || color[0] > 255 || color[1] > 255 || color[2] > 255) {
 		command_error(ERR_INDEX_OUT_OF_RANGE);
 		return;
 	}
+	if (color[0] > 15) color[0] = screen_nearest_palette(color[0]);
+	if (color[1] > 15) color[1] = screen_nearest_palette(color[1]);
+	if (color[2] > 15) color[2] = screen_nearest_palette(color[2]);
 	screen_set_color(color[0], color[1], color[2]);
 }
 // PAL n,v   : 色番号n(0..15)のRGB332値v(0..255)を設定
@@ -3891,6 +3933,90 @@ S_INLINE void command_ws_out() {
 	IJB_ERR_CHK();
 	int m = token_option1(1);
 	ws_out(port, n, m);
+}
+
+// ===== WS2812 NeoMatrix (WS.MODE / WS.PUT / RGB関数) =====
+
+// WS.MODE mode{,offset} — WS.LEDが読み込むピクセルデータの形式と開始位置を設定
+// mode 0-3: 0=配列3要素/px (従来互換・既定)、1=RGB332 1px/要素、2=RGB332x2 2px/要素、3=専用バッファ (WS.PUT)
+// offset: mode0-2は配列インデックス0-357、mode3はバッファのピクセル位置0-2729 (省略時0)
+// 設定はCLV実行時と起動時にモード0/オフセット0へ戻る (ws_data_reset)
+S_INLINE void command_ws_mode() {
+	int mode = token_expression();
+	IJB_ERR_CHK();
+	int offset = token_option1(0); // 省略時0に戻る (token_endも実行される)
+	IJB_ERR_CHK();
+	if (mode < 0 || mode > 3) {
+		command_error(ERR_ILLEGAL_ARGUMENT);
+		return;
+	}
+	if (mode == 3) { // 専用バッファ: ピクセル位置
+		if (offset < 0 || offset >= WS_BUFFER_PIXELS) {
+			command_error(ERR_ILLEGAL_ARGUMENT);
+			return;
+		}
+	} else { // 配列: インデックス
+		if (offset < 0 || offset >= IJB_SIZEOF_ARRAY_MAX) {
+			command_error(ERR_ILLEGAL_ARGUMENT);
+			return;
+		}
+	}
+	ws_data_mode = mode;
+	ws_data_offset = offset;
+}
+
+// WS.PUT idx,R,G,B — 専用バッファ (mode3) のピクセルidxへ1px書込み (GRB順で格納)
+// R/G/Bは0-255へクランプ (負→0、超過→255)。idx範囲外はIllegal argument
+S_INLINE void command_ws_put() {
+	int idx = token_expression();
+	IJB_ERR_CHK();
+	int rgb[3];
+	for (int i = 0; i < 3; i++) {
+		int code = token_getCode();
+		if (code != TOKEN_COMMA) {
+			command_error(ERR_SYNTAX_ERROR);
+			return;
+		}
+		rgb[i] = token_expression();
+		IJB_ERR_CHK();
+	}
+	token_end();
+	IJB_ERR_CHK();
+	if (idx < 0 || idx >= WS_BUFFER_PIXELS) {
+		command_error(ERR_ILLEGAL_ARGUMENT);
+		return;
+	}
+	uint8_t* p = ws_matrix_buf + (size_t)idx * 3;
+	for (int i = 0; i < 3; i++) { // 格納順はGRB (WS.LED mode3がそのまま送信)
+		int v = rgb[i];
+		if (v < 0) v = 0;
+		if (v > 255) v = 255;
+		p[i] = (uint8_t)v;
+	}
+}
+
+// RGB(r,g,b) — R/G/B (0-255) をRGB332値 (RRRGGGBB、0-255) へ変換して返す
+// 各成分は上位ビットを採用 (255→7、128→4、0-31→0)。COLOR RGB(...) や WS.MODE 1/2 用
+S_INLINE int func_rgb() {
+	int n[3];
+	for (int i = 0;; i++) {
+		n[i] = token_expression();
+		IJB_ERR_CHK1(0);
+		if (i == 2)
+			break;
+		Token t; Token_get(t);
+		if (t.code != TOKEN_COMMA) {
+			command_error(ERR_SYNTAX_ERROR);
+			return 0;
+		}
+	}
+	Token t; Token_get(t);
+	if (t.code != TOKEN_PAREN_E) {
+		command_error(ERR_SYNTAX_ERROR);
+		return 0;
+	}
+	int r = n[0] & 0xFF, g = n[1] & 0xFF, b = n[2] & 0xFF;
+	return ((r >> 5) << 5) | (((g >> 5) & 7) << 2) | ((b >> 6) & 3);
 }
 
 // ===== 4K版: IR.IN / ENV.IN コマンド (GivetakeJam_P実装を移植) =====

@@ -41,6 +41,39 @@ static void __noinline __not_in_flash_func(wsled_send_one_signal_1575) (uint8 pi
 //WS2812B-2020以降のリセット時間は>280µsのものがあるためマージンを取る
 #define WS_RESET_US 500
 
+//WS2812 NeoMatrixのピクセルモード状態 (WS_MODE_* / ws_data_mode / ws_data_offset /
+//ws_matrix_buf / ws_data_reset) はbasic.hで定義 (WS.MODE/WS.PUTコマンドとWS.LEDで共用)
+
+//RGB332 (RRRGGGBB) → 8bit G/R/B展開 (3bit値 v<<5|v<<2|v>>1: 7→255、2bit値 v<<6|v<<4|v<<2|v: 3→255)
+static void ws_rgb332_expand(uint8 v332, uint8* g, uint8* r, uint8* b) {
+    uint8 r3 = (v332 >> 5) & 7, g3 = (v332 >> 2) & 7, b2 = v332 & 3;
+    *r = (uint8)((r3 << 5) | (r3 << 2) | (r3 >> 1));
+    *g = (uint8)((g3 << 5) | (g3 << 2) | (g3 >> 1));
+    *b = (uint8)((b2 << 6) | (b2 << 4) | (b2 << 2) | b2);
+}
+
+//WS.LEDのLED番号k (0起点) に対応するピクセルデータを現在のモードで取得
+//(オフセット以降から読む。PIO/ビットバング両経路で共用)
+static void ws_fetch_px(int k, uint8* g, uint8* r, uint8* b) {
+    int o = ws_data_offset;
+    if (ws_data_mode == WS_MODE_BUFFER) {
+        const uint8_t* p = ws_matrix_buf + (size_t)(o + k) * 3;
+        *g = p[0]; *r = p[1]; *b = p[2];
+    } else if (ws_data_mode == WS_MODE_RGB888) {
+        int idx = o + k * 3;
+        *g = (uint8)*basic_getArrayPtr(idx);
+        *r = (uint8)*basic_getArrayPtr(idx + 1);
+        *b = (uint8)*basic_getArrayPtr(idx + 2);
+    } else if (ws_data_mode == WS_MODE_RGB332X2) {
+        int16 v = *basic_getArrayPtr(o + k / 2);
+        uint8 v332 = (k & 1) ? (uint8)(v >> 8) : (uint8)v; // 偶数px=下位バイト、奇数px=上位バイト
+        ws_rgb332_expand(v332, g, r, b);
+    } else { // WS_MODE_RGB332
+        uint8 v332 = (uint8)*basic_getArrayPtr(o + k);
+        ws_rgb332_expand(v332, g, r, b);
+    }
+}
+
 //===== WS.LED送信 =====
 //通常はPIOでWS2812波形を生成する。CPUは送信FIFOが埋まるまで待つだけで、
 //NTSCのDMA割込み (DMA_IRQ_1) を止めないため画面が乱れない。
@@ -96,14 +129,17 @@ static void __noinline __not_in_flash_func(ws_bitbang_out) (uint8 pin, int nled,
     gpio_put(pin, false);
     sleep_us(WS_RESET_US); //リセット信号
     //repeat分を1つの割込み禁止区間で連続送信 (フレーム間にリセットが入らない)
-    //最悪でも119LED×3×24×1.26µs≈11ms/1repeatで、NTSC表示はDMAで維持される
+    //最悪でも2730px×3×8×1.26µs≈82ms/1repeat (mode3) で、NTSC表示はDMAで維持される
     int save = save_and_disable_interrupts();
     for (int i = 0; i < repeat; i++) {
-        for (int j = 0; j < nled * 3; j++) {//1つのLEDにつき、3つの変数が必要
-            uint16 v = *basic_getArrayPtr(j); //拡張配列変数対応 (4K版)
-            for (int k = 7; k >= 0; k--) {
-                bool bit = v & (0x01 << k);
-                wsled_send_one_signal_1575(pin, bit);
+        for (int k = 0; k < nled; k++) {//1つのLEDにつきG/R/B 3バイト (WS.MODEに応じたソース)
+            uint8 g, r, b;
+            ws_fetch_px(k, &g, &r, &b);
+            uint8 rgb[3] = { g, r, b }; //GRB順 (MSBファースト)
+            for (int j = 0; j < 3; j++) {
+                for (int bi = 7; bi >= 0; bi--) {
+                    wsled_send_one_signal_1575(pin, (rgb[j] >> bi) & 0x01);
+                }
             }
         }
     }
@@ -122,17 +158,29 @@ static void __noinline __not_in_flash_func(ws_bitbang_out) (uint8 pin, int nled,
 //基板内蔵WS2812 (GP16) のピン番号 (WS.LED 0 / 起動・診断表示で使用)
 static uint8 led_builtin_pin = 16;
 
-//WS.LED port,n[,repeat] (4K版: ポート選択式+拡張配列変数対応)
+//WS.LED port,n[,repeat] (4K版: ポート選択式+拡張配列変数対応+WS.MODEピクセルモード)
 //port: 0=基板内蔵WS2812(GP16)、1-6=OUT1-6、7=外部WS2812(GP15)、8=LED(GP2)、9-11=OUT9-11 (IN2/IN3/IN4)
 //(OUT8=IN1のみWS.LEDからは指定不可: 8がLED(OUT7)に割り当てられているため)
-//n: LED数、repeat: 送信回数。色データは配列変数[0]〜[n*3-1]から読み込む (1LEDにつき3変数)
+//n: LED数、repeat: 送信回数。色データはWS.MODEのモード/オフセットに従って読み込む
 static void __noinline ws_out(int port, int nled, int repeat) {
     if (port < 0 || port > 11 || nled < 1 || repeat < 1) {
         return;
     }
-    if (nled * 3 > IJB_SIZEOF_ARRAY_MAX) { //配列変数の範囲内に収める (最大119LED)
-        nled = IJB_SIZEOF_ARRAY_MAX / 3;
+    //WS.MODEのモード/オフセットに応じた残りピクセル数へ自動切詰め
+    if (ws_data_mode == WS_MODE_BUFFER) {
+        int avail = WS_BUFFER_PIXELS - ws_data_offset;
+        if (nled > avail) nled = avail;
+    } else if (ws_data_mode == WS_MODE_RGB888) {
+        int avail = (IJB_SIZEOF_ARRAY_MAX - ws_data_offset) / 3;
+        if (nled > avail) nled = avail;
+    } else if (ws_data_mode == WS_MODE_RGB332X2) {
+        int avail = (IJB_SIZEOF_ARRAY_MAX - ws_data_offset) * 2;
+        if (nled > avail) nled = avail;
+    } else { // WS_MODE_RGB332
+        int avail = IJB_SIZEOF_ARRAY_MAX - ws_data_offset;
+        if (nled > avail) nled = avail;
     }
+    if (nled < 1) return; //オフセット以降にデータがない
     // 0=基板内蔵WS2812(GP16)、7=外部WS2812(GP15)、8=LED(GP2)、1-6=OUT1-6
     uint8 pin = (port == 0) ? led_builtin_pin : ((port == 7) ? WS2812_PIN : ((port == 8) ? LED : out_pins[port - 1]));
     if (sd_pin_reserved(pin)) {
@@ -145,14 +193,14 @@ static void __noinline ws_out(int port, int nled, int repeat) {
 
     ws_pio_configure(pin);//この中でリセットを出す
     //repeat回数分、リセットを挟まず連続送信する (公式IchigoJam仕様:
-    //n個分のパターンが後続LEDへ流れて、テープ長分タイル状に繰り返される)
+    //n個分のパターンが後続LEDへ流れて、テープ長分タイル状に繰り返される。
+    //repeatでも毎回オフセットから同じデータを再読み込みする)
     for (int i = 0; i < repeat; i++) {
-        for (int j = 0; j < nled * 3; j += 3) {//1つのLEDにつき、3つの変数が必要
-            uint8 g = *basic_getArrayPtr(j);
-            uint8 r = *basic_getArrayPtr(j + 1);
-            uint8 b = *basic_getArrayPtr(j + 2);
+        for (int k = 0; k < nled; k++) {
+            uint8 g, r, b;
+            ws_fetch_px(k, &g, &r, &b);
             uint32_t v = ((uint32_t)g << 24) | ((uint32_t)r << 16) | ((uint32_t)b << 8);
-            pio_sm_put_blocking(ws_pio, ws_pio_sm, v); //GRB順、下位8bitは無視される
+            pio_sm_put_blocking(ws_pio, ws_pio_sm, v); //GRB順、MSBファースト (下位8bitは無視される)
         }
     }
     while (!pio_sm_is_tx_fifo_empty(ws_pio, ws_pio_sm)) {

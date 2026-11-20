@@ -1,0 +1,42 @@
+﻿SDON
+NEOJAM
+-----------------------------------------------------------
+[ 機能 ]
+SD カードを有効化します。
+
+[ コマンド 書式 ]
+SDON
+
+[ 例 ]
+SDON
+SAVE 200
+FILES
+
+[ 解説 ]
+SD カードを初期化し、FAT32 としてマウントします。
+成功すると SD ready (FAT32, <速度>kHz) を表示します。
+SD カードへの保存・読み込みはスロット 200-299 を使用します
+(SAVE・LOAD・LRUN・FILES を参照)。
+
+対応は FAT32 (32GB 以下を推奨。SDXC/exFAT は
+FAT32 で再フォーマット)、ルートディレクトリのみ、
+8.3 形式ファイル名です。
+
+SD カードと共有するピンは次のとおりです。
+
+    CS  = IN3 (GP6)     MISO = OUT1 (GP8)
+    CLK = OUT3 (GP10)   MOSI = OUT4 (GP11)
+    カード検出 = IN4 (GP7、LOW=挿入。
+                 CD 端子がないモジュールは GP7 を GND へ)
+
+SDON 中は共有ピン (IN3/IN4/OUT1/OUT3/OUT4) の
+I/O 命令 (IN・OUT・PWM・WS.LED・IR.IN・IR.OUT) が
+ブロックされます。SDOFF で解放すると I/O ピンは復帰します。
+
+SD モジュールは 3.3V で駆動して下さい (5V 不可)。
+読み取り CRC 検査・書込み後の全バイト照合を行い、
+失敗時は SD read/write error の詳細を表示します。
+不良カード検出時は SD FALLBACK で 100kHz へ
+自動的に速度を下げます。
+SD init error 1 はカード未挿入または GP7 (カード検出) が
+HIGH のまま (CD 未配線) です。

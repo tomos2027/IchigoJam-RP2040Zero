@@ -1,0 +1,264 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"/>
+<title>Milkjam BASIC リファレンス ver 1.6.1</title>
+<style>
+body {
+	font-family: sans-serif;
+}
+table {
+	border-collapse: collapse;
+	font-size: 12px;
+	margin: 0.5em 0;
+	width: auto;
+}
+th, td {
+	background: white;
+	border: 1px solid gray;
+	padding: 0px 5px;
+	text-align: left;
+}
+tr.sec th {
+	background: #e0e0e0;
+	text-align: left;
+	font-size: 13px;
+}
+h1 {
+	font-size: 24px;
+	padding: 0;
+	margin: 0;
+}
+h2 {
+	font-size: 15px;
+	margin: 1em 0 0 0;
+}
+.note {
+	font-size: 12px;
+	border: 1px solid gray;
+	background: #f4f4f4;
+	padding: 5px 10px;
+	margin: 0.5em 0;
+	width: 60em;
+}
+.credit {
+	margin: .3em 0;
+	font-size: 12px;
+}
+a {
+	color: black !important;
+}
+</style>
+</head>
+<body>
+<h1>Milkjam BASIC リファレンス ver 1.6.1</h1>
+
+<div class="note">
+ベース: IchigoJam BASIC 1.6.1 (4K版) ／ 対象: <a href="https://github.com/tomos2027/Milkjam">Raspberry Pi Pico 2 W版 Milkjam</a> (RP2350 + WiFi)<br>
+・プログラム領域 4096バイト、配列変数 [0]〜[357] の358個、内蔵フラッシュに25本保存 (0〜24)<br>
+・表示は3モード (<b>SWITCH 0</b>: HDMI (DVI 720x480p60) ／ <b>SWITCH 1</b>: NTSCコンポジット (カラー可) ／ <b>SWITCH 2</b>: TFT液晶 ILI9341)<br>
+・WiFi・センサー・ThingsBoard・OLEDは <b>EJ</b> コマンド、センサー一括読み取りは <b>PAD.IN</b> を使用 (下段「Milkjam拡張」参照)<br>
+・I2Cバスは GP4 (SDA) / GP5 (SCL)。GP23/24/25/29 は内蔵WiFiチップ (CYW43) 専用のため使用不可<br>
+・記法: { } で囲んだ引数は省略可。コマンドの後ろの / 〜 は読み方 (ふりがな)
+</div>
+
+<table>
+<tr><th>コマンド</th><th>解説</th><th>例</th></tr>
+<tr><td>LED 数 / エル・イー・ディー</td><td>数が1ならLED (GP2) が光り、0なら消える</td><td>LED 1</td></tr>
+<tr><td>WAIT 数1{,数2} / ウェイト</td><td>数1の数だけ待つ（60で１秒）。マイナスの数を指定すると走査線分で待つ(-261でWAIT1と同じ時間)。省略できる数2に0を指定すると画面表示を止め低電力化して待つ。</td><td>WAIT 60</td></tr>
+<tr><td>: / コロン</td><td>コマンドを後ろに続けて書くときの区切り記号</td><td>WAIT 60:LED 1</td></tr>
+<tr><td>行番号 {コマンド} / ワン</td><td>1. 数は-32768から32767まで表記できる。 2. 行頭の1〜32767で指定された数は行番号として、コマンドと合わせて記録する。コマンドを省略するとその行を削除（16385以上は指定しないと表示しない）</td><td>10 LED1</td></tr>
+<tr><td>RUN / ラン</td><td>プログラムを実行する [F5]</td><td>RUN</td></tr>
+<tr><td>LIST {行番号1{,行番号2}} / リスト</td><td>プログラムを表示する [F4] （行番号1で1行表示、行番号1がマイナスでその行まで表示、行番号2指定でその行まで表示、行番号2が0の時終わりまで表示、ESCで途中停止）</td><td>LIST 10,300</td></tr>
+<tr><td>GOTO 行番号 / ゴートゥー</td><td>指定した行番号へ飛ぶ（式も指定可能）</td><td>GOTO 10</td></tr>
+<tr><td>END / エンド</td><td>プログラムを終了する</td><td>END</td></tr>
+<tr><td>IF 数 {THEN} コマンド1 {ELSE コマンド2} / イフ</td><td>数が0でなければコマンド1を実行し、0であればコマンド2を実行する（THEN,ELSE以降は省略可、ただし16進数後は:で区切る必要あり）</td><td>IF BTN() END</td></tr>
+<tr><td>IF 数 {THEN} コマンド1 {ELSE コマンド2} / ゼン</td><td>数が0でなければコマンド1を実行し、0であればコマンド2を実行する（THEN,ELSE以降は省略可、ただし16進数後は:で区切る必要あり）</td><td>IF BTN() THEN END</td></tr>
+<tr><td>IF 数 {THEN} コマンド1 {ELSE コマンド2} / エルス</td><td>数が0でなければコマンド1を実行し、0であればコマンド2を実行する （THEN,ELSE以降は省略可、ただし16進数後は:で区切る必要あり）</td><td>IF BTN() END ELSE CONT</td></tr>
+<tr><td>BTN({数}) / ボタン</td><td>ボタンが押されていれば1、そうでないとき0を返す（数：0(BTN端子/GP28のボタン)/UP/DOWN/RIGHT/LEFT/SPACE/X(88)、省略で0、-1でビットパターンで返す。USBキーボードの矢印キーなども判定可）</td><td>LED BTN()</td></tr>
+<tr><td>NEW / ニュー</td><td>プログラムを全部消す</td><td>NEW</td></tr>
+<tr><td>PRINT {数や文字列} / プリント</td><td>数や文字列を表示する （文字列は"で囲む、";" で連結できる）</td><td>PRINT "HI!";15</td></tr>
+<tr><td>? {数や文字列} / クエスション</td><td>数や文字列を表示する （文字列は"で囲む、";" で連結できる）</td><td>?"HI!";15</td></tr>
+<tr><td>LOCATE 数1{,数2{,数3}} / ロケート</td><td>次に文字を書く位置を横、縦の順に指定する（左上が0,0、縦=-1で無表示。画面は32x24、VIDEO 10時は42x27）。数1のみでX+Y*幅。数3が0でなければ指定した場所にカーソルを表示する。</td><td>LOCATE 3,3</td></tr>
+<tr><td>LC 数1{,数2{,数3}} / ロケート</td><td>次に文字を書く位置を横、縦の順に指定する（左上が0,0、縦=-1で無表示）。数1のみでX+Y*幅。数3が0でなければ指定した場所にカーソルを表示する。</td><td>LC 3,3</td></tr>
+<tr><td>CLS / クリア・スクリーン</td><td>画面を全部消す</td><td>CLS</td></tr>
+<tr><td>RND(数) / ランダム</td><td>0から数未満のでたらめな整数を返す</td><td>PRINT RND(6)</td></tr>
+<tr><td>SAVE {数{,数2}} / セーブ</td><td>プログラムを保存する（内蔵フラッシュ0〜24の25本、100-131 外付けEEPROM、200-299 SDカード (SDON時)。省略で前回使用した数）。SDに数2=1を指定するとアスキー形式・UTF-8で保存 (P200.BAS、PCのエディタで編集可)。ボタンを押した状態で起動すると0番を読み込み自動実行（2秒待ち、ESCで中断）</td><td>SAVE 1</td></tr>
+<tr><td>LOAD {数} / ロード</td><td>プログラムを読み出す（内蔵フラッシュ0〜24の25本、100-131 外付けEEPROM、200-299 SDカード (SDON時)、省略で前回使用した数）。SDは.IJB優先、なければ.BASを自動判読</td><td>LOAD</td></tr>
+<tr><td>FILES {数1{,数2}} / ファイルズ</td><td>数1(省略可)〜数2のプログラム一覧を表示する（SDON中はSDカード (200-299) の一覧、SDOFF中はフラッシュ/EEPROM、0指定ですべて表示、ESCで途中停止）</td><td>FILES</td></tr>
+<tr><td>BEEP {数1{,数2}} / ビープ</td><td>単音を鳴らす 周期(0-32767)と長さ(1/60秒単位)は省略可 ※SOUND-GND (GP20) に圧電サウンダーなどの接続が必要</td><td>BEEP</td></tr>
+<tr><td>PLAY {"MML1"{,"MML2"{,"MML3}}} / プレイ</td><td>MML、記述した音楽を最大3声で同時演奏する。省略で音停止 ※SOUND-GND (GP20) に圧電サウンダーなどの接続が必要 （MSX互換MML、CDEFGAB：ドレミファソラシ、R：休符、.：音や休符を1.5倍伸ばす、T120：テンポ、O4：オクターブ(1-6)、N10：単音、V：音量、&lt;：オクターブ上げる、&gt;：オクターブ下げる、$：繰り返し、'：以後鳴らさない）</td><td>PLAY "$CDE2CDE2","$EGB4"</td></tr>
+<tr><td>TEMPO 数 / テンポ</td><td>再生中の音楽のテンポを変更する</td><td>TEMPO 1200</td></tr>
+<tr><td>数 + 数 / プラス</td><td>足し算する</td><td>PRINT 1+1</td></tr>
+<tr><td>数 - 数 / マイナス</td><td>1. 引き算する 2. 後に続く数をマイナスにする</td><td>PRINT 2-1</td></tr>
+<tr><td>数 * 数 / アスタリスク</td><td>掛け算する</td><td>PRINT 7*8</td></tr>
+<tr><td>数 / 数 / スラッシュ</td><td>割り算する（小数点以下は切り捨て）</td><td>PRINT 9/3</td></tr>
+<tr><td>数 % 数 / パーセント</td><td>割り算した余りを返す（MODも同じ）</td><td>PRINT 10%3</td></tr>
+<tr><td>(式) / ブラケット</td><td>カッコ内の式を優先して計算する</td><td>PRINT 1+(1*2)</td></tr>
+<tr><td>LET 変数,数 / レット</td><td>数をアルファベット１文字の変数や配列の値として記憶する（配列へ連続代入可能 LET[0],1,2）</td><td>LET A,1</td></tr>
+<tr><td>変数=数 / イコール</td><td>1. 数をアルファベット１文字の変数や配列の値として記憶する。 2. 式として使うと==と同じ機能となる</td><td>A=1</td></tr>
+<tr><td>INPUT {文字列,}変数 / インプット</td><td>キーボードやUARTからの入力で数値を変数にいれる（文字列とコンマは省略可）</td><td>INPUT "ANS?",A</td></tr>
+<tr><td>TICK({数}) / ティック</td><td>CLTからの時間を返す（1/60秒で1進む） *数に1指定で1/(60*261)秒で1進む時間</td><td>PRINT TICK()</td></tr>
+<tr><td>CLT / クリア・ティック</td><td>TICK()のカウントをリセットする</td><td>CLT</td></tr>
+<tr><td>INKEY() / インキー</td><td>キーボードやUARTから１文字入力する（入力がない時は0、UARTから0が入力された時は#100）</td><td>PRINT INKEY()</td></tr>
+<tr><td>LEFT / レフト</td><td>28を返す。INKEYのキーコードの判定や、SCROLLに使う</td><td>IF INKEY()=LEFT LED1</td></tr>
+<tr><td>RIGHT / ライト</td><td>29を返す。INKEYのキーコードの判定や、SCROLLに使う</td><td>IF INKEY()=RIGHT LED1</td></tr>
+<tr><td>UP / アップ</td><td>30を返す。INKEYのキーコードの判定や、SCROLLに使う</td><td>IF INKEY()=UP LED1</td></tr>
+<tr><td>DOWN / ダウン</td><td>31を返す。INKEYのキーコードの判定や、SCROLLに使う</td><td>IF INKEY()=DOWN LED1</td></tr>
+<tr><td>SPACE / スペース</td><td>32を返す。INKEYのキーコードの判定や、SCROLLに使う</td><td>IF INKEY()=SPACE LED1</td></tr>
+<tr><td>CHR$(数{,数2{,数3…}}) / キャラクター</td><td>PRINT内で、文字コードに対応する文字を返す（コンマ区切りで連続表記可）</td><td>PRINT CHR$(65)</td></tr>
+<tr><td>ASC("文字") / アスキー</td><td>文字に対する文字コードを返す</td><td>PRINT ASC("A")</td></tr>
+<tr><td>SCROLL 数 / スクロール</td><td>指定した方向に1キャラ分スクロールする（0/UP:上、1/RIGHT:右、2/DOWN:下、3/LEFT:左）</td><td>SCROLL 2</td></tr>
+<tr><td>SCR({数,数}) / スクリーン</td><td>画面上の指定した位置に書かれた文字コードを返す（指定なしで現在位置）</td><td>PRINT SCR(0,0)</td></tr>
+<tr><td>VPEEK({数,数}) / ブイ・ピーク</td><td>画面上の指定した位置に書かれた文字コードを返す（指定なしで現在位置）</td><td>PRINT VPEEK(0,0)</td></tr>
+<tr><td>数 == 数 / イコール・イコール</td><td>比較して等しい時に1、それ以外で0を返す。</td><td>IF A==B LED 1</td></tr>
+<tr><td>数 != 数 / ノット・イコール・トゥー</td><td>比較して等しくない時に1、それ以外で0を返す</td><td>IF A!=B LED 1</td></tr>
+<tr><td>数 &lt;&gt; 数 / レス・アンド・グレーター・ザン</td><td>比較して等しくない時に1、それ以外で0を返す</td><td>IF A&lt;&gt;B LED 1</td></tr>
+<tr><td>数 &lt;= 数 / レス・ザン・オア・イコール・トゥー</td><td>比較して以下の時に1、それ以外で0を返す</td><td>IF A&lt;=B LED 1</td></tr>
+<tr><td>数 &lt; 数 / レス・ザン</td><td>比較して未満の時に1、それ以外で0を返す</td><td>IF A&lt;B LED 1</td></tr>
+<tr><td>数 &gt;= 数 / グレーター・ザン・オア・イコール・トゥー</td><td>比較して以上の時に1、それ以外で0を返す</td><td>IF A&gt;=B LED 1</td></tr>
+<tr><td>数 &gt; 数 / グレーター・ザン</td><td>比較してより大きい時に1、それ以外で0を返す</td><td>IF A&gt;B LED 1</td></tr>
+<tr><td>式 AND 式 / アンド</td><td>どちらの式も1の時に1、それ以外で0を返す</td><td>IF A=1 AND B=1 LED 1</td></tr>
+<tr><td>式 &amp;&amp; 式 / アンド</td><td>どちらの式も1の時に1、それ以外で0を返す</td><td>IF A=1 &amp;&amp; B=1 LED 1</td></tr>
+<tr><td>式 OR 式 / オア</td><td>どちらかの式が1の時に1、それ以外で0を返す</td><td>IF A=1 OR B=1 LED 1</td></tr>
+<tr><td>式 || 式 / オア</td><td>どちらかの式が1の時に1、それ以外で0を返す</td><td>IF A=1 || B=1 LED 1</td></tr>
+<tr><td>NOT 式 / ノット</td><td>式が0の時に1、それ以外で0を返す</td><td>IF NOT A=1 LED 1</td></tr>
+<tr><td>! 式 / ノット</td><td>式が0の時に1、それ以外で0を返す</td><td>IF !(A=1) LED 1</td></tr>
+<tr><td>REM / リマーク</td><td>これ以降のコマンドを実行しない（コメント機能）</td><td>REM START</td></tr>
+<tr><td>' / シングル・クォート</td><td>これ以降のコマンドを実行しない（コメント機能）</td><td>' START</td></tr>
+<tr><td>FOR 変数=数1 TO 数2 {STEP 数3}:コマンド:NEXT / フォー</td><td>変数に数1をいれ、数2になるまで数3ずつ増やしながらNEXTまでをくりかえす （STEPは省略可、6段まで）</td><td>FOR I=0 TO 10:?I:NEXT</td></tr>
+<tr><td>FOR 変数=数1 TO 数2 {STEP 数3}:コマンド:NEXT / トゥー</td><td>変数に数1をいれ、数2になるまで数3ずつ増やしながらNEXTまでをくりかえす （STEP省略時は数3は1、6段まで）</td><td>FOR I=0 TO 10:?I:NEXT</td></tr>
+<tr><td>FOR 変数=数1 TO 数2 {STEP 数3}:コマンド:NEXT / ステップ</td><td>変数に数1をいれ、数2になるまで数3ずつ増やしながらNEXTまでをくりかえす （STEPは省略可、6段まで）</td><td>FOR I=0 TO 10 STEP 2:?I:NEXT</td></tr>
+<tr><td>FOR 変数=数1 TO 数2 {STEP 数3}:コマンド:NEXT / ネクスト</td><td>変数に数1をいれ、数2になるまで数3ずつ増やしながらNEXTまでをくりかえす （STEPは省略可、6段まで）</td><td>FOR I=0 TO 10:?I:NEXT</td></tr>
+<tr><td>POS({数}) / ポジション</td><td>カーソル位置を返す（数、省略時または0:X+Y*幅、1:X座標、2:Y座標）</td><td>?POS(0),POS(1)</td></tr>
+<tr><td>DRAW 数1,数2{,数3,数4}{,数5} / ドロー</td><td>数1,数2の座標から数3,数4の座標へ線を引く（座標は最大63x47、VIDEO 10時は83x53）、数5に0指定で線を消し、2指定で反転する、省略時または1指定で線を引く。数3,数4を省略して数1,数2の座標に点を打つ</td><td>DRAW 1,5,10,15</td></tr>
+<tr><td>POINT(数1,数2) / ポイント</td><td>数1,数2の座標にDRAWで描かれた点または文字があるときに1、そうでないとき0を返す</td><td>?POINT(1,5)</td></tr>
+<tr><td>OUT 数1{,数2} / アウト</td><td>外部出力に0または1を出力する（数1：0=全部まとめて、1-6=OUT1-6 (GP8/9/10/11/22/21)、7=LED (GP2)、8-11=IN1-4 (GP27/26/6/7)）。数2を省略でまとめて出力できる。数2に-1指定でIN(フロート)へ切り替え、-2指定でプルアップ付きINへ切り替え。SDON中は共有ピン (OUT1/3/4、IN3/IN4) の出力はブロック</td><td>OUT 1,1</td></tr>
+<tr><td>IN({数}) / イン</td><td>入力ピンから0または1を返す（数：1=IN1 (GP27)、2=IN2 (GP26)、3=IN3 (GP6/SD共有)、4=IN4 (GP7/SD共有)、5-8=OUT1-4、9=BTN (GP28)、10=OUT5 (GP22)、11=OUT6 (GP21)。省略で11ビットのパターンでまとめて入力。IN3/IN4はSDON中は読めない）</td><td>LET A,IN(1)</td></tr>
+<tr><td>ANA({数}) / アナログ</td><td>外部入力の電圧(0V-3.3V)を0-1023の数値で返す（0,9:BTN (GP28)、1:IN1 (GP27)、2:IN2 (GP26)、省略で0。GP26-28がADC）</td><td>?ANA()</td></tr>
+<tr><td>PWM 数1,数2{,数3} / ピー・ダブリュー・エム</td><td>外部出力OUT1-6に数2で0.01msec単位で指定するパルスを出力する（0-2000、周期20msec）、数3で周期を指定（省略時2000=20msec）。数3に負値で高速モード（数2/|数3| が1/48µs単位。PWM 5,630,-1260 で38kHz 50%、赤外線送信と同じ）。SDON中の共有ピン (OUT1/3/4) は出力不可</td><td>PWM 2,100</td></tr>
+<tr><td>CLV / クリア・バリアブル</td><td>変数、配列を全部0にする</td><td>CLV</td></tr>
+<tr><td>CLEAR / クリア</td><td>変数、配列を全部0にする</td><td>CLEAR</td></tr>
+<tr><td>CLK / クリア・キー</td><td>キーバッファとキーの状態をクリアする</td><td>CLK</td></tr>
+<tr><td>CLO / クリア・アウトプット</td><td>入出力ピンを初期状態に戻す</td><td>CLO</td></tr>
+<tr><td>ABS(数) / アブソリュート</td><td>絶対値を返す（マイナスはプラスになる）</td><td>?ABS(-2)</td></tr>
+<tr><td>[数] / アレイ</td><td>配列（4K版拡張で[0]から[357]までの358コの連続した変数として使える） LET[0],1,2,3で連続代入可能。WS.LEDの色データ ([0]-[2]=緑赤青) やIR.INの受信結果などにも使う</td><td>[3]=1</td></tr>
+<tr><td>GOSUB 行番号 / ゴーサブ</td><td>戻り先をスタックに積み、数または式で指定した行番号に飛ぶ（ネストは30段まで）</td><td>GOSUB 100</td></tr>
+<tr><td>GSB 行番号 / ゴーサブ</td><td>戻り先をスタックに積み、数または式で指定した行番号に飛ぶ（ネストは30段まで）</td><td>GSB 100</td></tr>
+<tr><td>RETURN / リターン</td><td>GOSUB/GSBの呼び出し元へ戻る</td><td>RETURN</td></tr>
+<tr><td>RTN / リターン</td><td>GOSUB/GSBの呼び出し元へ戻る</td><td>RTN</td></tr>
+<tr><td>DEC$(数1{,数2}) / デシ</td><td>PRINT内で、数を文字列にする（２番目の数は桁数、省略可）</td><td>?DEC$(99,3)</td></tr>
+<tr><td>#16進数 / ハッシュ</td><td>16進数で数を表記する *この後THENを省略しA〜Fで始まるコマンドを使う場合 : で区切る</td><td>#FF</td></tr>
+<tr><td>HEX$(数1{,数2}) / ヘックス</td><td>PRINT内で、数を16進数の文字列にする（２番目の数は桁数、省略可）</td><td>?HEX$(255,2)</td></tr>
+<tr><td>`2進数 / バック・クォート</td><td>2進数で数を表記する</td><td>`1010</td></tr>
+<tr><td>BIN$(数1{,数2}) / バイナリー</td><td>PRINT内で、数を2進数の文字列にする（２番目の数は桁数、省略可）</td><td>?BIN$(255,8)</td></tr>
+<tr><td>数 &amp; 数 / アンパサンド</td><td>論理積（ビット演算）</td><td>?3&amp;1</td></tr>
+<tr><td>数 | 数 / パイプ</td><td>論理和（ビット演算）</td><td>?3|1</td></tr>
+<tr><td>数 ^ 数 / ハット</td><td>排他的論理和（ビット演算）</td><td>?A^1</td></tr>
+<tr><td>数 &gt;&gt; 数 / シフト・ライト</td><td>右シフトする（ビット演算）</td><td>?A&gt;&gt;1</td></tr>
+<tr><td>数 &lt;&lt; 数 / シフト・レフト</td><td>左シフトする（ビット演算）</td><td>?A&lt;&lt;1</td></tr>
+<tr><td>~数 / チルダ</td><td>ビット反転（ビット演算）</td><td>?~A</td></tr>
+<tr><td>COS(数) / コサイン</td><td>指定された数を角度の度数としてコサインの値の256倍を返す</td><td>?COS(90)</td></tr>
+<tr><td>SIN(数) / サイン</td><td>指定された数を角度の度数としてサインの値の256倍を返す</td><td>?SIN(90)</td></tr>
+<tr><td>STOP / ストップ</td><td>プログラムを中断する</td><td>STOP</td></tr>
+<tr><td>CONT / コンティニュー</td><td>実行中の行や、中断した行を再度実行する</td><td>CONT</td></tr>
+<tr><td>SOUND() / サウンド</td><td>音が再生中なら1、そうで無いとき0を返す</td><td>?SOUND()</td></tr>
+<tr><td>FREE() / フリー</td><td>プログラムの残りメモリ数を返す（プログラム領域は4096バイト）</td><td>?FREE()</td></tr>
+<tr><td>VER({数}) / バージョン</td><td>Milkjam BASICのバージョン番号を返す（VER()=16130、VER(1)=9 (RP2350)）</td><td>?VER()</td></tr>
+<tr><td>RENUM {数1{,数2}} / リナンバー</td><td>プログラムの行番号を数1(省略時は10)から数2(省略時は10)刻みにする。GOTO/GOSUBの飛び先は手で変更必要な場合がある</td><td>RENUM</td></tr>
+<tr><td>LRUN {数1{,数2}} / ロードラン</td><td>ファイル数1のプログラムを読み込み後、実行する(数2が指定されていたらその行へGOTO)。数1はフラッシュ0-24、EEPROM100-131、SDカード200-299 (SDON時) を指定可</td><td>LRUN 1</td></tr>
+<tr><td>FILE() / ファイル</td><td>最後にプログラムを読み込み、書き込み行った数を返す</td><td>?FILE()</td></tr>
+<tr><td>LINE() / ライン</td><td>現在実行中の行番号を返す（非実行時は0）</td><td>?LINE()</td></tr>
+<tr><td>SRND 数 / エス・ランダム</td><td>種を指定して乱数を初期化する</td><td>SRND 0</td></tr>
+<tr><td>HELP / ヘルプ</td><td>メモリマップを表示する</td><td>HELP</td></tr>
+<tr><td>PEEK(数) / ピーク</td><td>メモリ読み出し（キャラクターパターン0-#7FFなど）</td><td>?PEEK(#700)</td></tr>
+<tr><td>POKE 数,数 / ポーク</td><td>メモリへの書き込み（連続書き込み可能 POKE#700,1,2,3）</td><td>POKE #700,#FF</td></tr>
+<tr><td>COPY 数1,数2,数3 / コピー</td><td>メモリコピー 数1のアドレスへ数2のアドレスから数3の長さ分コピー(数3マイナスでコピー方向が逆になる)</td><td>COPY #900,0,256</td></tr>
+<tr><td>CLP / クリア・パターン</td><td>キャラクターパターン(#700-#7FF)を初期化する</td><td>CLP</td></tr>
+<tr><td>"文字列" / ダブル・クォート</td><td>文字列の先頭アドレスを返す</td><td>A="ABC"</td></tr>
+<tr><td>STR$(数1{,数2}) / ストリング</td><td>PRINT内で、文字列を返す（数2(省略可)で長さ指定）</td><td>PRINT STR$(A)</td></tr>
+<tr><td>LEN("文字列") / レングス</td><td>文字列の長さを返す</td><td>PRINT LEN("ABC")</td></tr>
+<tr><td>@ラベル / アット・マーク</td><td>行の先頭に書くとラベルとなり、行番号の代わりとして使える（GOTO @LOOPなど） ※前方一致。0番のプログラム先頭を@ARUNにすると電源投入時に自動実行される</td><td>@LOOP</td></tr>
+<tr><td>VIDEO 数1{,数2} / ビデオ</td><td>画面表示非表示を切り替える 0で画面表示を停止し処理高速化 （F8で表示）、省略可能な数2でVIDEO0時CPUクロックを1/数2に変更し省電力化、数1が2の倍数で白黒反転、数1が3以上で拡大モード。NTSCモードでは数1に9 (32x24 16色) か10 (42x27 16色) を指定するとカラー化（VIDEO 1で戻す。HDMI/TFTモードではカラー関連は値の保持のみ）</td><td>VIDEO 0</td></tr>
+<tr><td>RESET / リセット</td><td>Milkjamをリセットする（WiFi・センサーも含め再起動する）</td><td>RESET</td></tr>
+<tr><td>SLEEP / スリープ</td><td>プログラムを休止する (ボタンを押すと起動し、2秒後に最後に使用したプログラムをLRUNする。ESCでBreak)</td><td>SLEEP</td></tr>
+<tr><td>UART 数1{,数2} / ユー・アート</td><td>数1：シリアル出力設定（0:オフ、1:PRINTのみ、2:PRINT/LC/CLS/SCROLL、3:PRINTのみ/改行コード\r\n、+4で入力エコーバック、+8で画面表示OFF、初期値:2）、数2：シリアル受信設定（0:オフ、1:オン、+2:ESC無効、+4:CR変換(13→10) 省略時1）。UART診断出力 (PW: で始まるメッセージ) は常にGP0へ出力</td><td>UART 0</td></tr>
+<tr><td>BPS 数1{,数2} / ビー・ピー・エス</td><td>シリアル通信速度を変更する(0で初期値の115,200bps、-1:57600bps、-2:38400bps、-100以下指定で指定した数の-100倍bpsに指定、-2304:230400bps)。数2でI2Cの通信速度設定（単位kHz、0:デフォルト400kHz。I2CバスはGP4/GP5）</td><td>BPS 9600</td></tr>
+<tr><td>OK {数} / オーケー</td><td>OKやエラーメッセージの表示有無を切り替える（数、1:表示、2:非表示、省略で1）</td><td>OK 2</td></tr>
+<tr><td>I2CR(数1,数2,数3,数4,数5) / アイ・ツー・シー・リード</td><td>I2Cで周辺機器から読み込む I2Cアドレス、コマンド送信アドレス・長さ、受信アドレスと長さ（コマンド送信が1byteの時数3を省略可、コマンド送信が0byteの時数2/数3を省略可。GP4/GP5のバスはセンサー・OLED・RTCと共有）</td><td>R=I2CR(#50,#114A,2,#114C,2)</td></tr>
+<tr><td>I2CW(数1,数2,数3,数4,数5) / アイ・ツー・シー・ライト</td><td>I2Cで周辺機器に書き込む I2Cアドレス、コマンド送信アドレス・長さ、送信アドレスと長さ（数4/数5は省略可、コマンド送信が1byteの時数3を省略可）</td><td>R=I2CW(#50,#114A,2,#114C,2)</td></tr>
+<tr><td>USR(数1{,数2}) / ユーザー</td><td>数1で指定されたアドレスのマシ語(Arm Cortex-M33)を数2をパラメータとして呼び出す（数2省略で0）</td><td>A=USR(#700,0)</td></tr>
+
+<tr class="sec"><th colspan="3">Milkjam拡張 — 映像出力と色 (SWITCH 0:HDMI / 1:NTSC / 2:TFT液晶)</th></tr>
+<tr><td>SWITCH {数1{,数2}} / スイッチ</td><td>画面出力を切り替える（数1：0=DVI (HDMI) 720x480p60、1=NTSCコンポジット (GP3)、2=TFT液晶 ILI9341 (GP12-16、HDMIピンと排他)。省略で次のモードへトグル）。数2はTFTモードの回転（1で180°回転、0で戻す）。モードと回転設定はflashに保存され次回起動時も維持。NTSCモードはCPUが157.5MHz駆動のため実行速度は遅くなる。LCDON/LCDOFFで排他ブロック中のモードは切り替えられない</td><td>SWITCH 0</td></tr>
+<tr><td>LCDON / エル・シー・ディー・オン</td><td>TFT液晶を有効化してLCDモード (SWITCH 2) へ切り替える。以後 SWITCH 0 (HDMI) への切替はブロックされる（GP12-16をHDMIと共用するための排他制御。設定はflashに保存）</td><td>LCDON</td></tr>
+<tr><td>LCDOFF / エル・シー・ディー・オフ</td><td>TFT液晶を無効化する（LCDモード中はHDMI (DVI) へ切り替わる）。以後 SWITCH 2 (LCD) への切替はブロックされる。NTSC (GP3) は常に切り替え可能</td><td>LCDOFF</td></tr>
+<tr><td>COLOR 数1{,数2{,数3}} / カラー</td><td>文字色を設定する（数1=前景色、数2=背景色、数3=周辺色、各0-15。COLも同じ）。NTSCモード (VIDEO 9/10) でのみ表示に反映され、HDMI/TFTでは値の保持のみ</td><td>COLOR 4,1</td></tr>
+<tr><td>COL 数1{,数2{,数3}} / カラー</td><td>COLORの省略形</td><td>COL 4,1</td></tr>
+<tr><td>PAL 数1,数2 / パレット</td><td>パレットを設定する（数1=色番号0-15、数2=RGB332値0-255）。PAL 数1,赤,緑,青 (各0-255) の指定も可。PAL RESET で既定パレットへ戻す（NTSCモード専用）</td><td>PAL 1,#FF</td></tr>
+<tr><td>PAL(数) / パレット</td><td>色番号数のRGB332値を返す（NTSCモード専用）</td><td>?PAL(1)</td></tr>
+<tr><td>ATTR 数1,数2,数3 / アトリビュート</td><td>座標(数1,数2)のセルの色属性を設定する（数3=下位4bit前景色/上位4bit背景色。NTSCモード専用）</td><td>ATTR 0,0,17</td></tr>
+<tr><td>ATTR(数1,数2) / アトリビュート</td><td>座標(数1,数2)のセルの色属性 (下位4bit前景色/上位4bit背景色) を返す（NTSCモード専用）</td><td>?ATTR(0,0)</td></tr>
+
+<tr class="sec"><th colspan="3">Milkjam拡張 — サウンド (AY-3-8910互換3声PSG)</th></tr>
+<tr><td>SOUND 数1{,数2} / サウンド</td><td>PSGレジスタ (R0-R13) を直接操作する（AY-3-8910互換、最大3声。実行すると多声PSGモードへ移行。BEEP/単声PLAYはPWMトーンへ戻る。R0/R1=chA周波数、R2/R3=chB、R4/R5=chC、R6=エンベロープ周期、R7=ミキサ、R8-10=chA-C音量、R11-13=エンベロープ）</td><td>SOUND 8,15</td></tr>
+
+<tr class="sec"><th colspan="3">Milkjam拡張 — WS2812B LED / 赤外線</th></tr>
+<tr><td>WS.LED 数1{,数2{,数3}} / ダブリュー・エス・エル・イー・ディー</td><td>WS2812Bを光らせる（数1=ポート：0=内蔵LED (CYW43、配列[0]-[2]のいずれかが0でなければ点灯)、1-6=OUT1-6、7=LED (GP2)。数2=LED数、省略可、数3=繰り返し回数、省略可）。色データは配列の先頭から緑赤青 (GRB) の順 ([0]=G/[1]=R/[2]=B、2個目は[3]-[5]…)。PIO送信のため長いLEDテープでも表示やUSBキーボードが乱れない。最大119個 (配列[0]-[357])。SDON中は共有ピン (ポート1/3/4) への送信はブロック</td><td>[1]=40:WS.LED 1,8</td></tr>
+<tr><td>IR.IN 数1,[n] / アイアール・イン</td><td>NEC赤外線リモコン (38kHz、HX1838など) の信号をポート数1 (1-4=IN1-4) で受信し、結果を配列[n]以降7個へ入れる（[n]-[n+3]=カスタム/データの各バイト、[n+4]=リピート回数、[n+5]=エラーコード (0=成功)、[n+6]=モード）。受信待ちの間プログラムは止まる。4.7kΩプルアップ不要 (内蔵)</td><td>IR.IN 1,[100]:?[100]</td></tr>
+<tr><td>IR.OUT 数1,数2{,数3} / アイアール・アウト</td><td>NEC赤外線をポート数1 (1-6=OUT1-6) から送信する（数2=16ビットデータ：上位8bit=カスタム (アドレス) / 下位8bit=コマンド。数3=繰り返し回数、省略可）。IR.OUT 数1,[n]{,数3} でIR.INの受信結果 ([n]-[n+6]) をそのまま再送する。38kHzキャリアはPWM高速モードで生成</td><td>IR.OUT 1,#FF00</td></tr>
+
+<tr class="sec"><th colspan="3">Milkjam拡張 — SDカード (FAT32、スロット200-299)</th></tr>
+<tr><td>SDON / エス・ディー・オン</td><td>SDカードを初期化してFAT32をマウントする → SD ready (FAT32, 1000kHz)。以後 SAVE/LOAD/LRUN/FILES の200-299がSDカードになる。SDと共用のピン (IN3/IN4/OUT1/OUT3/OUT4 = GP6/7/8/10/11) の I/O命令 (IN/OUT/PWM/WS.LED/IR.IN) はブロックされる</td><td>SDON</td></tr>
+<tr><td>SDOFF / エス・ディー・オフ</td><td>SDカードを解放し、I/Oピンを元の状態へ戻す</td><td>SDOFF</td></tr>
+
+<tr class="sec"><th colspan="3">Milkjam拡張 — IOTPAD (WiFi・センサー・ThingsBoard・OLED・時刻)</th></tr>
+<tr><td>EJ "コマンド"{,"引数"} / イージェイ</td><td>IOTPAD機能のコマンドを実行する（引用符は省略可。応答は画面に表示）。主なコマンド：WiFi/時刻=SETSSID・SETPWD・SETTOKEN・SETSSIDHEX・SETPWDHEX・SETTOKENHEX・APC (接続)・APD (切断)・APS (状態)・RECONNECT・SYNCTIME (NTP同期+RTC書込)・GETTIME・SETTIME・GETIP・GETSSID・GETPWD・GETTOKEN、センサー=GETTEMP・GETTEMP2・GETEXTTEMP1・GETEXTTEMP2・GETHUM・GETPRESS・GETLUX・GETLTRLUX・GETLTRUV・GETLTRUVCPS・GETDISTANCE・GETALL (GETxxx2は100倍の値)、較正=SETTEMP等・SETALL・SETCLEAR・OFFSETTEMP等・GETOFFSET・OFFSETCLEAR・CALIBEXTTEMP・DS18B20、ThingsBoard=SENDTB (即時/引数で自動送信間隔秒・0=OFF)・GETQUEUE・FLUSHQUEUE・CLEARQUEUE、OLED=OLEDON・OLEDOFF・OLEDCLEAR・OLEDCUR,x,y・OLEDPRINT・OLEDFONT,0-4・OLEDPAGE,1-5・NEXTSCR、その他=VER・GETCONF・GETRESET・HELP (未定義はUnknown:表示)</td><td>EJ "APC"</td></tr>
+<tr><td>EJ(コマンド{,"引数"}) / イージェイ</td><td>EJの関数形式。数値結果を返す（式の中で使用可。数値を返さないコマンドはエラー。引用符なし ?EJ(GETTEMP2) も可）</td><td>?EJ("GETTEMP2")</td></tr>
+<tr><td>EJ コマンド,変数 / イージェイ</td><td>EJの代入形式。数値結果を画面表示せず変数/配列へ代入する（スケールはPAD.INと同一の0.1単位系。EJ GETTIME,[200] は[200]-[205]へ年/月/日/時/分/秒 (JST) を代入）</td><td>EJ GETTEMP,A</td></tr>
+<tr><td>PAD.IN [n] / パッド・イン</td><td>全センサー値とRTC時刻を配列[n]以降16個へ一括格納する（値は1秒周期の定期読取値、SET*キャッシュ・オフセット適用済み。[n]=温度0.1℃、[n+1]=湿度0.1%RH、[n+2]=気圧0.1hPa、[n+3]=外気温1 0.1℃、[n+4]=外気温2 0.1℃、[n+5]=照度lux、[n+6]=照度2 0.1lux、[n+7]=UV cps、[n+8]=距離0.1cm (無効=0)、[n+9]=状態フラグ (bit0:BME280 bit1:BH1750 bit2:LTR390 bit3:VL53L0X bit4:DS18B20 bit5:RTC、1=認識済)、[n+10]-[n+15]=年/月/日/時/分/秒 (JST、RTCなし=0)。配列番号は式可、[n+15]≦[357]）</td><td>PAD.IN [100]:?[100]/10</td></tr>
+<tr><td>ENV.IN [n] / エンブ・イン</td><td>環境センサー (AHT20/BMP280互換 0x38/0x76-77) から温度・湿度・気圧を読み配列[n]以降6個へ格納する（[n]=温度0.1℃、[n+1]=湿度0.1%RH、[n+2]=気圧0.1hPa、[n+3]=BMP280温度0.1℃、[n+4]=エラー、[n+5]=状態フラグ (bit0:AHT20 bit1:BMP280)。4K版拡張）</td><td>ENV.IN [100]:?[100]</td></tr>
+
+<tr class="sec"><th colspan="3">Milkjam拡張 — その他</th></tr>
+<tr><td>KBD 数 / キーボード</td><td>USBキーボードの配列を切り替える（0=英語 (US) 配列、1=日本語 (JIS) 配列。設定はflashに保存され再起動後も維持）</td><td>KBD 1</td></tr>
+<tr><td>DAC 数1,数2 / ディー・エー・シー</td><td>本機では未実装（何もしない、互換用のダミー命令）</td><td>DAC 0,0</td></tr>
+</table>
+
+<h2>クイックスタート</h2>
+<div class="note">
+EJ "SETSSID","&lt;SSID&gt;" … WiFi設定 (flashに保存)<br>
+EJ "SETPWD","&lt;パスワード&gt;"<br>
+EJ "APC" … 接続 (Connected:とIPアドレス表示)<br>
+EJ "SYNCTIME" … NTP同期+RTCへ書込 (以後WiFiなしでも時刻保持)<br>
+EJ "SETTOKEN","&lt;ThingsBoardトークン&gt;"<br>
+EJ "SENDTB" … テレメトリ送信 → TB Code:200 (EJ "SENDTB",60 で60秒ごと自動送信)<br>
+PAD.IN [100] … センサー値一括取得 ([100]=温度0.1℃、[101]=湿度0.1%RH、…)
+</div>
+
+<h2>セーブスロット</h2>
+<table>
+<tr><th>番号</th><th>保存先</th><th>備考</th></tr>
+<tr><td>0-24</td><td>内蔵フラッシュ (25本)</td><td>0番はボタン起動・@ARUNでの自動実行対象</td></tr>
+<tr><td>100-131</td><td>外付けEEPROM</td><td></td></tr>
+<tr><td>200-299</td><td>SDカード (FAT32)</td><td>SDONが必要。SAVE 200 でP200.IJB (バイナリ)、SAVE 200,1 でP200.BAS (アスキー・UTF-8)</td></tr>
+</table>
+
+<h2>I/Oポート対応表</h2>
+<table>
+<tr><th>ポート</th><th>GP</th><th>共有機能</th></tr>
+<tr><td>OUT1</td><td>GP8</td><td>SD MISO (SDON中はブロック)</td></tr>
+<tr><td>OUT2</td><td>GP9</td><td></td></tr>
+<tr><td>OUT3</td><td>GP10</td><td>SD CLK (SDON中はブロック)</td></tr>
+<tr><td>OUT4</td><td>GP11</td><td>SD MOSI (SDON中はブロック)</td></tr>
+<tr><td>OUT5</td><td>GP22</td><td></td></tr>
+<tr><td>OUT6</td><td>GP21</td><td></td></tr>
+<tr><td>LED</td><td>GP2</td><td>基板LED (WS.LED ポート7)</td></tr>
+<tr><td>IN1</td><td>GP27</td><td>ADC1 / DS18B20 (EJ "DS18B20",1 で切替)</td></tr>
+<tr><td>IN2</td><td>GP26</td><td>ADC0</td></tr>
+<tr><td>IN3</td><td>GP6</td><td>SD CS (SDON中はブロック)</td></tr>
+<tr><td>IN4</td><td>GP7</td><td>SDカード検出 (SDON中はブロック)</td></tr>
+<tr><td>BTN</td><td>GP28</td><td>ADC2 (ANA(0))</td></tr>
+<tr><td>内蔵LED</td><td>CYW43 WL_GPIO0</td><td>WS.LED ポート0 / WiFi状態表示と兼用</td></tr>
+<tr><td>サウンド</td><td>GP20</td><td>圧電サウンダー (SOUND-GND)</td></tr>
+</table>
+
+<div class="credit">ベース: CC BY <a href=https://ichigojam.net/>IchigoJam</a>（DATA: <a href=https://github.com/ichigojam/doc/>https://github.com/ichigojam/doc/</a>）／ Milkjam: <a href=https://github.com/tomos2027/Milkjam>tomos2027/Milkjam</a> (MIT license)。詳細は同梱のREADME_JA.md / MANUAL_JA.md参照。</div>
+</body>
+</html>

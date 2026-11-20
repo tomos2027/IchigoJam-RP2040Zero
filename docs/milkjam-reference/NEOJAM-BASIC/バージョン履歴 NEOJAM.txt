@@ -1,0 +1,37 @@
+﻿NEOJAM バージョン履歴
+
+
+1.6.1 (VER() = 16130)
+・IchigoJam BASIC 1.6.1 4K 版 (GivetakeJam_P rp2350-16130 準拠) を
+  Waveshare RP2040-Zero (RP2040) へ移植
+  タイトル表記: NeoJam BASIC 1.6.1 NTSC-4K forked by NEXTDAY
+・NTSC コンポジット出力専用 (GP3、独自実装のクリーンルーム
+  ドライバ・PWM+DMA 方式、CPU 157.5MHz 駆動)
+・NTSC カラー表示対応: COLOR/COL・PAL・ATTR、VIDEO 9 (32x24) /
+  10 (42x27) 16 色 (テスト実装)
+・3 声 PSG サウンド対応 (AY-3-8910 互換): PLAY 3 声・SOUND レジスタ
+  操作、単声は PWM トーン (GP14 出力・アンプ+スピーカー接続必要)
+・SD カード対応 (FAT32): SDON/SDOFF、スロット 200-299、
+  GivetakeJam_P 準拠の共有ピン方式 (GP6/7/8/10/11)、
+  アスキー形式保存 (SAVE n,1 → Pnnn.BAS・UTF-8)
+・WS.LED ポート選択式 (PIO 駆動): 0=基板内蔵 WS2812 (GP16・
+  起動時緑 5 回点滅・エラー時赤高速点滅と共用)、1-6=OUT1-6、
+  7=外部 WS2812 (GP15)、8=LED (GP2)、9-11=OUT9-11 (IN2/IN3/IN4)
+・NEC 赤外線送受信: IR.IN / IR.OUT (38.46kHz キャリア)
+・PWM 命令を IchigoJam 仕様に変更 (38kHz 高速モード対応)
+・IOT.IN / IOT.OUT (sakura.io モジュール・I2C)、ENV.IN
+  (AHT20+BMP280 環境センサー)、KBD (JIS/US 配列 +
+  ローマ字かな入力)
+・EJ コマンド追加 (OLED 表示、SSD1306 128x64・I2C 0x3C、
+  Milkjam IOTPAD 互換): OLEDON/OLEDOFF/OLEDCLEAR/OLEDCUR/
+  OLEDPRINT/OLEDFONT (flash 保存)/OLEDPAGE (3 ページ: システム
+  情報/ENV.IN/入力状態)、U8g2 準拠フォント 5 種
+・WS2812 NeoMatrix 対応: WS.MODE (ピクセル格納モード 0-3 と
+  オフセット設定、mode 3 は 8KB 専用バッファで最大 2730px)、
+  WS.PUT (専用バッファへ 1px 書込み)、RGB(r,g,b) 関数
+  (RGB332 変換、COLOR の引数 0-255 対応)
+・SAVE/KBD のフラッシュ書込みを core1 に委譲し、
+  書込み中も NTSC 表示を維持
+・割込み・タイミング競合の修正 (keybuf 競合解消、
+  time_us_64 torn read 対策、WS2812 ビットバング後の
+  映像位相復旧、TinyUSB パッチ適用のビルド時検証)

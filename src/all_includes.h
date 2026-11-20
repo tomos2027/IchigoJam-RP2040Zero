@@ -63,6 +63,10 @@
 #include "ext_ws.h"
 #include "mainc_functions.h"
 #include "IchigoJam_BASIC/ext_iot.h"
+// EJ OLED (SSD1306 128x64、I2C 0x3C、Milkjam IOTPAD互換) — basic.h後・init.h前に読む
+#include "oled_fonts.h"
+#include "neojam_oled.h"
+#include "ext_ej.h"
 #include "usr.h"
 #include "init.h"
 

@@ -352,6 +352,25 @@ int screen_get_palette(int n) {
 	if (n < 0 || n > 15) return 0;
 	return screen_pal[n];
 }
+/* RGB332値 (0-255) をパレット16色の最近傍インデックスへ変換 (COLOR RGB(...)用)。
+   既定パレットは純色+半輝度のRGB332構成のため RGB(255,0,0)→赤(2) に正確に一致する。
+   距離はG重み付けのマンハッタン距離 (R/G差×36、B差×85: 3bit/3bit/2bitの階調幅で正規化)。 */
+int screen_nearest_palette(int rgb332) {
+	int r = (rgb332 >> 5) & 7, g = (rgb332 >> 2) & 7, b = rgb332 & 3;
+	int best = 0, bestd = 0x7fffffff;
+	for (int i = 0; i < 16; i++) {
+		int v = screen_pal[i];
+		int dr = (int)((v >> 5) & 7) - r;
+		int dg = (int)((v >> 2) & 7) - g;
+		int db = (int)(v & 3) - b;
+		if (dr < 0) dr = -dr;
+		if (dg < 0) dg = -dg;
+		if (db < 0) db = -db;
+		int d = dr * 36 + dg * 36 + db * 85;
+		if (d < bestd) { bestd = d; best = i; }
+	}
+	return best;
+}
 void screen_set_palette(int n, int v) {
 	if (n < 0 || n > 15 || v < 0 || v > 255) return;
 	screen_pal[n] = (uint8)v;
