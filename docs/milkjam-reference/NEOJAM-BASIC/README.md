@@ -42,6 +42,8 @@ NEOJAM は単一プラットフォームのため、
   7=外部 WS2812 (GP15)・8=LED (GP2)・9-11=OUT9-11)、PIO 駆動
 - `WS.MODE` / `WS.PUT` / `RGB` WS2812 NeoMatrix 対応
   (ピクセル格納モード 0-3・オフセット、8KB 専用バッファ、RGB332 関数)
+- `WS.MATRIX` / `WS.XY` x,y 座標でマトリックス描画
+  (8x8 / 5x5、ジグザグ配線・左右/上下反転、R,G,B 0-255)
 - `IR.IN` / `IR.OUT` NEC 赤外線の受信・送信 (4K 版拡張)
 - `ENV.IN` 環境センサー (AHT20+BMP280、4K 版拡張)
 - `PLAY` 3 声同時演奏 (AY-3-8910 互換 PSG・MSX 互換 MML)

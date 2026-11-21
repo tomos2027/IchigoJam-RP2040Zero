@@ -54,7 +54,7 @@ a {
 ベース: IchigoJam BASIC 1.6.1 (4K版) ／ 対象: <a href="https://github.com/tomos2027/IchigoJam-RP2040Zero">Waveshare RP2040-Zero版 NEOJAM</a> (RP2040・NTSCコンポジット出力専用)<br>
 ・プログラム領域 4096バイト、配列変数 [0]〜[357] の358個、内蔵フラッシュに25本保存 (0〜24)<br>
 ・映像は NTSC コンポジット (GP3、75Ω+560pF の外部回路経由) 専用。VIDEO 9/10 で 16 色カラー表示可。CPU は 157.5MHz 駆動<br>
-・基板内蔵 WS2812 (GP16) は起動・エラー表示と共用で WS.LED 0 でも制御可。外部 WS2812 は WS.LED 7 (GP15)<br>
+・基板内蔵 WS2812 (GP16) は起動・エラー表示と共用で WS.LED 0 でも制御可。外部 WS2812 は WS.LED 7 (GP15) または WS.LED 8 (GP2・OUT7兼用)<br>
 ・I2Cバスは GP4 (SDA) / GP5 (SCL)。<br>
 ・記法: { } で囲んだ引数は省略可。コマンドの後ろの / 〜 は読み方 (ふりがな)
 </div>
@@ -203,10 +203,12 @@ a {
 <tr><td>IR.OUT 数1,数2{,数3} / アイアール・アウト</td><td>NEC赤外線をポート数1 (1-6=OUT1-6・GP8-13) から送信する（数2=16ビットデータ：上位8bit=カスタム (アドレス) / 下位8bit=コマンド。数3=繰り返し回数、省略可）。IR.OUT 数1,[n]{,数3} でIR.INの受信結果 ([n]-[n+6]) をそのまま再送する。キャリアは約38.46kHz (PWM高速モード)</td><td>IR.OUT 1,#FF00</td></tr>
 <tr><td>WS.MODE 数1{,数2} / ダブリュー・エス・モード</td><td>WS.LEDが読み込むピクセルデータの形式と開始位置を設定する（数1=モード 0-3：0=配列3要素/1px [o]=G/[o+1]=R/[o+2]=B (従来互換・既定)、1=RGB332 1px/要素、2=RGB332x2 2px/要素、3=専用バッファ (8KB・最大2730px、WS.PUTで書込み)。数2=オフセット (mode0-2: 配列インデックス0-357、mode3: バッファpx位置0-2729、省略時0)。設定はCLV実行時と起動時にモード0/オフセット0へ戻る。LED数はオフセット以降の残りピクセル数に自動切詰め。mode3では8x8=42フレーム/16x16=10フレーム分保存可）</td><td>WS.MODE 1,F*64</td></tr>
 <tr><td>WS.PUT 数1,数2,数3,数4 / ダブリュー・エス・プット</td><td>専用バッファ (WS.MODE 3) のピクセル数1 (0-2729) へR/G/B (数2-数4、各0-255) で1px書込みする（範囲外の色値はクランプ、idx範囲外はIllegal argument。バッファはGRB順で格納されWS.MODE 3のWS.LEDが直接送信。バッファはCLV実行時と起動時にクリア）</td><td>WS.PUT 0,255,0,0</td></tr>
+<tr><td>WS.MATRIX 数1,数2{,数3} / ダブリュー・エス・マトリックス</td><td>WS.XYでx,y座標を指定して描画するためのWS2812マトリックス設定（数1=横ピクセル数1-255、数2=縦ピクセル数1-255、数1×数2は専用バッファ上限2730px以下。数3=配線フラグ0-7、省略時1：bit0=ジグザグ配線、bit1=左右反転、bit2=上下反転）。実行するとWS.MODE 3（専用バッファ）になりオフセットは0。設定はCLV実行時と起動時に8x8/ジグザグへ戻る</td><td>WS.MATRIX 8,8</td></tr>
+<tr><td>WS.XY 数1,数2,数3,数4,数5 / ダブリュー・エス・エックス・ワイ</td><td>WS.MATRIXの寸法に従い座標（数1=x 0〜w-1、数2=y 0〜h-1）へR/G/B（数3-数5、各0-255）で1px書き込む（範囲外の座標は無視、色値はクランプ。自動的にWS.MODE 3になりオフセットは維持。バッファはGRB順）</td><td>WS.MATRIX 8,8:WS.XY 0,0,255,0,0:WS.LED 7,64</td></tr>
 <tr><td>RGB(数1,数2,数3) / アール・ジー・ビー</td><td>R/G/B (各0-255) をRGB332値 (RRRGGGBB・0-255) へ変換して返す（各成分は上位ビットを採用: 255→7、128→4、0-31→0。WS.MODE 1/2の色データ作成用。COLOR RGB(255,0,0) のようにも使え、COLOR/COLの引数16-255はRGB332値として標準パレットの最近傍色に変換）</td><td>LET[0],RGB(255,128,0)</td></tr>
 
 <tr class="sec"><th colspan="3">NEOJAM拡張 — SDカード (FAT32、スロット200-299)</th></tr>
-<tr><td>SDON / エス・ディー・オン</td><td>SDカードを初期化してFAT32をマウントする → SD ready (FAT32)。以後 SAVE/LOAD/LRUN/FILES の200-299がSDカードになる。SDと共用のピン (IN3/IN4/OUT1/OUT3/OUT4 = GP6/7/8/10/11) の I/O命令 (IN/OUT/PWM/WS.LED/IR.IN/IR.OUT) はブロックされる</td><td>SDON</td></tr>
+<tr><td>SDON / エス・ディー・オン</td><td>SDカードを初期化してFAT32をマウントする → SD ready (FAT32, 1000kHz)（読み取りエラー時は100kHz）。以後 SAVE/LOAD/LRUN/FILES の200-299がSDカードになる。SDと共用のピン (IN3/IN4/OUT1/OUT3/OUT4 = GP6/7/8/10/11) の I/O命令 (IN/OUT/PWM/WS.LED/IR.IN/IR.OUT) はブロックされる</td><td>SDON</td></tr>
 <tr><td>SDOFF / エス・ディー・オフ</td><td>SDカードを解放し、I/Oピンを元の状態へ戻す</td><td>SDOFF</td></tr>
 
 <tr class="sec"><th colspan="3">NEOJAM拡張 — センサー・IOT (I2C GP4/5)</th></tr>
@@ -225,6 +227,7 @@ a {
 <div class="note">
 CLV:LET[0],0,40,0:WS.LED 0,1 … 内蔵WS2812 (GP16) を赤点灯 ([0]=G/[1]=R/[2]=B)<br>
 CLV:LET[0],0,40,0:WS.LED 11,1 … 外部WS2812をOUT11 (GP7/IN4パッド) で赤点灯<br>
+WS.MATRIX 8,8:WS.XY 0,0,255,0,0:WS.LED 7,64 … 8x8パネルの(0,0)を赤点灯<br>
 VIDEO 10:COLOR 6,0:?"HELLO" … 42x27カラー表示で黄色の文字<br>
 PLAY "O4CDEFGAB" … 1声演奏 (GP14→アンプ+スピーカーが必要)<br>
 SDON … SDカード (FAT32) をマウントし SAVE 200 等が可能になる

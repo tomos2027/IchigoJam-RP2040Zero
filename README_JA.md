@@ -11,6 +11,7 @@ IchigoJam BASIC 1.6.1 (4K版) の **Waveshare RP2040-Zero** (RP2040) 移植・**
 - **SDカード**: [GivetakeJam_P](https://github.com/Canon-boy4/ichigojam-firm/tree/rp2350-16130) 準拠の**共有ピン方式** (GP6/7/8/10/11、SDON中は該当OUT/INポートをブロック)
 - **アスキー形式 `SAVE n,1` → `Pnnn.BAS` (UTF-8)** でPC連携可
 - **ANA() アナログ入力対応** (IN1=GP27/ADC1、IN2=GP26/ADC0、BTN=GP28/ADC2)
+- **WS2812 NeoMatrix**: `WS.MODE`/`WS.PUT`/`RGB()` に加え、`WS.MATRIX w,h` と `WS.XY x,y,R,G,B` で8x8/5x5パネルへx,y座標で描画 (ジグザグ配線・左右/上下反転対応)
 - **LED / `WS.LED 8,n` は GP2** (WS2812)、**`WS.LED 7,n` は GP15** (外部WS2812)。**`WS.LED 0,n` は基板内蔵WS2812 (GP16)**。GP16 は起動表示・エラー診断にも使用
 - **裏面パッド (GP17-25) は未使用** — すべての機能が側面エッジパッドで完結
 
@@ -37,7 +38,7 @@ IchigoJam BASIC 1.6.1 (4K版) の **Waveshare RP2040-Zero** (RP2040) 移植・**
 | **OUT5** | **GP12** | | (IchigoJam_PのGP22から変更) |
 | **OUT6** | **GP13** | | (IchigoJam_PのGP21から変更) |
 | **SOUND** | **GP14** | | BEEP/PLAY/SOUND (単声PWM / 多声PSGエミュ) (IchigoJam_PのGP20から変更) |
-| **LED / WS.LED 8** | **GP2** | 側面パッド | `LED 1`/`LED 0` (通常GPIO)、`WS.LED 8,n` (WS2812) |
+| **LED / OUT7 / WS.LED 8** | **GP2** | 側面パッド | `LED 1`/`LED 0` (通常GPIO)、`OUT 7,n`、`WS.LED 8,n` (WS2812) |
 | **WS.LED 7** | **GP15** | 側面パッド | 外部WS2812のデータ出力 |
 | (内蔵WS2812) | GP16 | 基板実装 | 起動5回緑点滅、`WS.LED 0,n`、エラー時赤高速点滅 |
 | **IN2** | GP26 | | **ADC0** アナログ入力可 |
@@ -50,11 +51,11 @@ IchigoJam BASIC 1.6.1 (4K版) の **Waveshare RP2040-Zero** (RP2040) 移植・**
 
 > **WS2812の注意**: `WS.LED 0,n` は **GP16内蔵**、`WS.LED 7,n` の出力は **GP15**、`WS.LED 8,n` は **GP2 (3.3V論理)** です。5V駆動のWS2812テープはVIHが約3.5Vのため、**74AHCT125等のレベルシフタ**とGND共通・5V別電源が必要です。データ順は **GRB** です。
 >
-> 1LEDの動作確認 (赤): `CLV:LET[0],0,40,0:WS.LED 0,1` (GP16内蔵) / `WS.LED 7,1` (GP15)
+> 1LEDの動作確認 (赤): `CLV:LET[0],0,40,0:WS.LED 0,1` (GP16内蔵) / `WS.LED 7,1` (GP15) / `WS.LED 8,1` (GP2)
 
 ## SDカードの使い方 (GivetakeJam_P準拠)
 ```
-SDON            … カード+FAT32初期化 → "SD ready (FAT32, 1MHz)"
+SDON            … カード+FAT32初期化 → "SD ready (FAT32, 1000kHz)" (エラー時は100kHz)
 SAVE 200        … P200.IJB (バイナリ形式) に保存
 SAVE 200,1      … P200.BAS (アスキー形式、UTF-8) に保存 → PCで閲覧・編集可
 LOAD 200        … .IJB優先、なければ.BASを自動判別 (テキスト取込み)
@@ -70,7 +71,7 @@ PLAY "CDE","FGA","ABC"  … 3声 (AY-3-8910互換PSGエミュで混合出力)
 BEEP                    … 単声 (クリーンなPWM方形波)
 SOUND 0,228:SOUND 1,7:SOUND 7,254:SOUND 8,15   … MSX PSGレジスタ直接操作 (440Hz)
 ```
-※**音を聞くにはGP14 (側面パッド18) へのアンプ+スピーカー接続が必要です** (GND共通)。本体基板にスピーカーは実装されていません。
+※**音を聞くにはGP14 (側面パッド9) へのアンプ+スピーカー接続が必要です** (GND共通)。本体基板にスピーカーは実装されていません。
 
 3声サンプル (スーパーマリオ風BGM) やMMLコマンド一覧は [MANUAL_JA.md](MANUAL_JA.md) の「7. サウンド」を参照してください。
 
@@ -101,7 +102,7 @@ cmake --build build
 ## スペック
 | 項目 | 値 |
 |---|---|
-| BASIC | IchigoJam BASIC 1.6.1 (4K版、配列[0..357]) |
+| BASIC | IchigoJam BASIC 1.6.1 (4K版、配列[0..357]、`WS.LED`/`WS.MODE`/`WS.PUT`/`WS.MATRIX`/`WS.XY`/`RGB()`) |
 | `VER()` / `VER(1)` | 16130 / 8 (RP2040) |
 | クロック | 157.5MHz (NTSC、VREG 1.20V) |
 | 音声 | BEEP/PLAY単声 (PWM方形波) + 多声最大3声 (AY-3-8910互換PSGエミュ) |

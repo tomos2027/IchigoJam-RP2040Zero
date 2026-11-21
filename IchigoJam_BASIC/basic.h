@@ -132,10 +132,22 @@ static int ws_data_mode = WS_MODE_RGB888;    // ピクセル格納モード (0-3
 static int ws_data_offset = 0;               // 読み込み開始位置 (mode0-2: 配列インデックス0-357 / mode3: バッファpx位置0-2729)
 static uint8_t ws_matrix_buf[WS_BUFFER_BYTES]; // mode3専用バッファ (GRB 3バイト/px)
 
+//WS.MATRIX/WS.XY用のマトリクス設定 (論理座標→ピクセル番号の変換に使用)
+//flags: bit0=ジグザグ配線 (行ごとに折り返し)、bit1=左右反転(flipX)、bit2=上下反転(flipY)
+#define WS_MATRIX_FLAG_ZIGZAG 1
+#define WS_MATRIX_FLAG_FLIPX  2
+#define WS_MATRIX_FLAG_FLIPY  4
+static int ws_matrix_w = 8;            // 横ピクセル数
+static int ws_matrix_h = 8;            // 縦ピクセル数
+static int ws_matrix_flags = WS_MATRIX_FLAG_ZIGZAG; // 既定は8x8ジグザグ
+
 //WS.MODE/バッファのリセット (CLV実行時と起動時にbasic_clearVarsから呼ばれる)
 static void ws_data_reset() {
     ws_data_mode = WS_MODE_RGB888;
     ws_data_offset = 0;
+    ws_matrix_w = 8;
+    ws_matrix_h = 8;
+    ws_matrix_flags = WS_MATRIX_FLAG_ZIGZAG;
     memset(ws_matrix_buf, 0, sizeof ws_matrix_buf);
 }
 
@@ -446,6 +458,8 @@ S_INLINE void command_ej(); // EJ "CMD"[,"ARG"] コマンド (OLED制御、Milkj
 S_INLINE int func_ej(); // EJ("CMD") 関数 (数値結果を返す、Milkjam IOTPAD互換)
 S_INLINE void command_ws_mode(); // WS.MODE mode{,offset} (WS2812ピクセル格納モード)
 S_INLINE void command_ws_put(); // WS.PUT idx,R,G,B (専用バッファへ1px書込み)
+S_INLINE void command_ws_matrix(); // WS.MATRIX w,h{,flags} (マトリクス寸法・配線設定)
+S_INLINE void command_ws_xy(); // WS.XY x,y,R,G,B (座標で1px書込み)
 S_INLINE int func_rgb(); // RGB(r,g,b) 関数 (RGB332値を返す)
 static int ir_port_to_gpio(int port); // BASICのINポート番号→GPIO番号 (io.hで定義)
 static int ir_nec_tx(int port, uint32_t frame, int repeat); // NEC赤外線送信エンジン (io.hで定義)
@@ -675,6 +689,8 @@ int basic_execute(char* commandline) {
 			case TOKEN_EJ:		command_ej();								break; // EJ "CMD"[,"ARG"] (OLED制御、Milkjam IOTPAD互換)
 			case TOKEN_WS_MODE:	command_ws_mode();							break; // WS.MODE mode{,offset} (WS2812 NeoMatrix)
 			case TOKEN_WS_PUT:	command_ws_put();							break; // WS.PUT idx,R,G,B (専用バッファへ1px書込み)
+			case TOKEN_WS_MATRIX:	command_ws_matrix();						break; // WS.MATRIX w,h{,flags} (マトリクス寸法・配線設定)
+			case TOKEN_WS_XY:	command_ws_xy();							break; // WS.XY x,y,R,G,B (座標で1px書込み)
 			default:
 				#ifdef USE_EXTENSION
 				if (extension_command(token.code)) {
@@ -3987,8 +4003,87 @@ S_INLINE void command_ws_put() {
 		return;
 	}
 	uint8_t* p = ws_matrix_buf + (size_t)idx * 3;
+	int grb[3] = { rgb[1], rgb[0], rgb[2] }; // 引数R,G,B → バッファG,R,B
 	for (int i = 0; i < 3; i++) { // 格納順はGRB (WS.LED mode3がそのまま送信)
-		int v = rgb[i];
+		int v = grb[i];
+		if (v < 0) v = 0;
+		if (v > 255) v = 255;
+		p[i] = (uint8_t)v;
+	}
+}
+
+// 論理座標(x,y) → 専用バッファ内のピクセル番号 (0起点)。範囲外は-1
+// flipX/flipYを先に適用し、その後ジグザグ配線 (奇数行は列を反転) を反映する
+static int ws_xy_to_index(int x, int y) {
+	int w = ws_matrix_w, h = ws_matrix_h, f = ws_matrix_flags;
+	if (x < 0 || x >= w || y < 0 || y >= h) {
+		return -1;
+	}
+	if (f & WS_MATRIX_FLAG_FLIPX) x = w - 1 - x;
+	if (f & WS_MATRIX_FLAG_FLIPY) y = h - 1 - y;
+	int col = x;
+	if ((f & WS_MATRIX_FLAG_ZIGZAG) && (y & 1)) {
+		col = w - 1 - col;
+	}
+	return y * w + col;
+}
+
+// WS.MATRIX w,h{,flags} — マトリクスの寸法と配線を設定し、専用バッファ(mode3)・オフセット0へ
+// flags: bit0=ジグザグ (既定1)、bit1=左右反転、bit2=上下反転。w*hは専用バッファの範囲内
+S_INLINE void command_ws_matrix() {
+	int w = token_expression();
+	IJB_ERR_CHK();
+	int code = token_getCode();
+	if (code != TOKEN_COMMA) {
+		command_error(ERR_SYNTAX_ERROR);
+		return;
+	}
+	int h = token_expression();
+	IJB_ERR_CHK();
+	int flags = token_option1(WS_MATRIX_FLAG_ZIGZAG); // 省略時ジグザグ (token_endも実行)
+	IJB_ERR_CHK();
+	if (w < 1 || h < 1 || w > 255 || h > 255 || (long)w * h > WS_BUFFER_PIXELS) {
+		command_error(ERR_ILLEGAL_ARGUMENT);
+		return;
+	}
+	ws_matrix_w = w;
+	ws_matrix_h = h;
+	ws_matrix_flags = flags & (WS_MATRIX_FLAG_ZIGZAG | WS_MATRIX_FLAG_FLIPX | WS_MATRIX_FLAG_FLIPY);
+	ws_data_mode = WS_MODE_BUFFER; // WS.LEDが専用バッファを直接送信する
+	ws_data_offset = 0;
+}
+
+// WS.XY x,y,R,G,B — マトリクス座標(x,y)へ1px書込み。範囲外座標は無視、色は0-255にクランプ
+// 専用バッファ(mode3)の offset+idx にGRB順で格納する (オフセットはWS.MODE/WS.MATRIXで指定)
+S_INLINE void command_ws_xy() {
+	int arg[5];
+	for (int i = 0; i < 5; i++) {
+		arg[i] = token_expression();
+		IJB_ERR_CHK();
+		if (i == 4) {
+			break;
+		}
+		int code = token_getCode();
+		if (code != TOKEN_COMMA) {
+			command_error(ERR_SYNTAX_ERROR);
+			return;
+		}
+	}
+	token_end();
+	IJB_ERR_CHK();
+	int idx = ws_xy_to_index(arg[0], arg[1]);
+	if (idx < 0) {
+		return; // 範囲外はクリップ (エラーにしない)
+	}
+	int pos = ws_data_offset + idx;
+	if (pos < 0 || pos >= WS_BUFFER_PIXELS) {
+		return;
+	}
+	ws_data_mode = WS_MODE_BUFFER; // 暗黙的に専用バッファを選択 (オフセットは維持)
+	uint8_t* p = ws_matrix_buf + (size_t)pos * 3;
+	int grb[3] = { arg[3], arg[2], arg[4] }; // 引数R,G,B → バッファG,R,B
+	for (int i = 0; i < 3; i++) { // 格納順はGRB
+		int v = grb[i];
 		if (v < 0) v = 0;
 		if (v > 255) v = 255;
 		p[i] = (uint8_t)v;
