@@ -3,7 +3,8 @@
 #include "all_includes.h"
 
 //Waveshare RP2040-Zero (RP2040)
-// NTSC 157.5MHz駆動 (VREG 1.20Vオーバークロック)
+// NTSC駆動 (既定: 525ライン/157.333333MHz/60.0085Hz、VREG 1.20Vオーバークロック)
+// プリセット切替 (-DNTSCV_SIG_PRESET) により元ドライバ系信号にもできる
 //IchigoJam
 #define FONT_SIZE 8
 //UARTは基板の側面パッドGP0 (TX) / GP1 (RX) ※keyboard.hのUART_ID (uart0) と対
@@ -29,7 +30,18 @@ static void __not_in_flash_func(ntsc_line_callback)(void) {
     _g.linecnt++;
 }
 
-//1フレーム分vramの内容をNTSCのTVRAMに反映する
+//表示シャドウバッファ: 60Hzタイマーがここへ描画し、フィールド境界フック (DMA IRQ) が
+//TVRAMへ一括memcpyで反映する。vram_to_tvram_all全体をIRQで実行すると処理が重く
+//DMA再arm期限 (508µs) を超えて合流 (合成遅延) が多発するため、IRQ内の処理を
+//memcpy 1回 (約30µs) に抑える
+//構築中フラグ: フックのmemcpyがタイマーの描画途中に割り込むとシャドウの中途状態が
+//コピーされティアになるため (60Hz対60.19Hzのうなりで約5.4秒周期で発生)、
+//構築完了 (shadow_ready) のときだけコピーし、構築中は1フィールドスキップする
+static uint8_t tvram_shadow[WIDTH_XMAX * WIDTH_Y * 2 + 1];
+static volatile uint8_t tvram_shadow_building = 0;
+static volatile uint8_t tvram_shadow_ready = 0;
+
+//1フレーム分vramの内容を表示シャドウバッファへ反映する (TVRAMへの反映はフィールドフック)
 //VIDEO 3, 4 (screen_big) のときは1文字をmagxmag文字に複製して拡大表示する
 void vram_to_tvram_all(bool visible_cursor) {
     //PCG (0xE0-0xFF) をフォントRAMへ反映 (POKE #700-#7FF対応)
@@ -55,14 +67,14 @@ void vram_to_tvram_all(bool visible_cursor) {
                 uint8 a = screen_attr[idx];
                 if (_g.screen_invert || idx == cursor_pos)
                     a = (uint8)(((a & 0x0F) << 4) | ((a >> 4) & 0x0F));
-                TVRAM[idx] = vram[idx];
-                TVRAM[IJ_ATTROFFSET + idx] = a;
+                tvram_shadow[idx] = vram[idx];
+                tvram_shadow[IJ_ATTROFFSET + idx] = a;
             }
         }
         return;
     }
     if (ntscv_mode == NTSCV_MODE_COLOR_TEXT) {
-        // 42x27グリッド。32x24のテキストを左上に配置し、残りは背景色0。
+        // 42x27 カラーテキスト (VIDEO 10)。SCREEN_W/SCREEN_H は video_on() で 42/27 に設定済み。
         ntsc_mag = 1;
         for (int y = 0; y < SCREEN_H; y++) {
             for (int x = 0; x < SCREEN_W; x++) {
@@ -70,8 +82,8 @@ void vram_to_tvram_all(bool visible_cursor) {
                 uint8 a = screen_attr[idx];
                 if (_g.screen_invert || idx == cursor_pos)
                     a = (uint8)(((a & 0x0F) << 4) | ((a >> 4) & 0x0F));
-                TVRAM[y * WIDTH_X + x] = vram[idx];
-                TVRAM[ATTROFFSET + y * WIDTH_X + x] = a;
+                tvram_shadow[y * WIDTH_X + x] = vram[idx];
+                tvram_shadow[ATTROFFSET + y * WIDTH_X + x] = a;
             }
         }
         return;
@@ -85,8 +97,8 @@ void vram_to_tvram_all(bool visible_cursor) {
         for (int x = 0; x < SCREEN_W; x++) {
             uint8 c = vram[y * SCREEN_W + x];
             uint8 cellattr = attr | (y * SCREEN_W + x == cursor_pos ? IJ_ATTR_CURSOR : 0);
-            uint8* tvram_dst = TVRAM + y * mag * IJ_WIDTH + x * mag;
-            uint8* attr_dst = TVRAM + IJ_ATTROFFSET + y * mag * IJ_WIDTH + x * mag;
+            uint8* tvram_dst = tvram_shadow + y * mag * IJ_WIDTH + x * mag;
+            uint8* attr_dst = tvram_shadow + IJ_ATTROFFSET + y * mag * IJ_WIDTH + x * mag;
             for (int j = 0; j < mag; j++) {
                 for (int k = 0; k < mag; k++) {
                     tvram_dst[j * IJ_WIDTH + k] = c;
@@ -97,7 +109,20 @@ void vram_to_tvram_all(bool visible_cursor) {
     }
 }
 
-//NTSCビデオ出力を初期化し開始する (クロックは157.5MHz設定済みのこと)
+//表示更新 (DMA IRQのフィールド境界フックから1回/フィールドで呼ばれる)。
+//60Hzタイマーからコピーするとフィールド60.19Hzとのうなり (51µs/フレーム) で
+//ティア線が約5.4秒周期で画面を一周し、画面ジャンプ/ロールに見えていたため、
+//マークライン直後のVSYNC+ブランキング窓 (非表示) でシャドウをTVRAMへ一括反映する。
+//IRQ内の処理はmemcpy 1回のみ (vram_to_tvram_all本体は60Hzタイマーがシャドウへ描画)。
+//タイマーが構築中のときはこのフィールドはスキップし、次の境界で反映する
+static void field_display_update(void) {
+    if (tvram_shadow_ready) {
+        memcpy(TVRAM, tvram_shadow, sizeof(TVRAM));
+        tvram_shadow_ready = 0;
+    }
+}
+
+//NTSCビデオ出力を初期化し開始する (クロックはNTSC用の157.333333MHz設定済みのこと)
 void ntsc_init() {
     ntsc_fg.canary1 = 0xC0DE6001;//診断用カナリア
     ntsc_fg.canary2 = 0xC0DE6002;
@@ -107,6 +132,7 @@ void ntsc_init() {
     rp2040_pwm_ntsc_init(NTSC_PIN);
     screen_reset_palette();//COLOR用16色パレットをNTSCドライバへ反映
     ntsc_set_line_callback(ntsc_line_callback);
+    ntscv_set_field_hook(field_display_update);//表示更新をフィールド境界へ同期 (ティアリング修正)
     //IJTEXTモードへ直接設定する (set_videomodeだとstop/start_compositeが走り同期が乱れるため)
     videomode = VMODE_IJTEXT;
     twidth = IJ_WIDTH;
@@ -144,7 +170,11 @@ bool timer(repeating_timer_t* rt) {
     //NTSC整合性チェック (診断用): メモリ破壊を検知したらエラー番号を画面に表示し、以降の通常画面更新を止める
     uint32_t err = 0;
     if (Fontp != ntsc_fontram) err |= 1;//フォントポインタ破壊
-    if (vram != (uint8*)RAM_VRAM) err |= 2;//VRAMポインタ破壊
+    if (videomode == VMODE_WIDETEXT || videomode == VMODE_WIDEGRPH) {
+        if (vram != vram_wide) err |= 2;//VIDEO 10/拡大VRAMポインタ破壊
+    } else {
+        if (vram != (uint8*)RAM_VRAM) err |= 2;//VRAMポインタ破壊
+    }
     if (videomode != NTSCV_MODE_IJ_TEXT &&
         videomode != NTSCV_MODE_COLOR_TEXT &&
         videomode != NTSCV_MODE_COLOR_GRAPH &&
@@ -176,9 +206,11 @@ bool timer(repeating_timer_t* rt) {
         diag_persist = 0;//エラーが消えたら連続カウントをリセット
     }
     if (ntsc_diag_error) {
-        //TVRAMへ直接エラー番号を書く (VRAM経由でないのでVRAMが壊れていても表示される)
-        clearscreen();
-        uint8* p = TVRAM;
+        //エラー表示をシャドウへ構築する (TVRAMへの反映はフィールドフックのmemcpyで行う)
+        tvram_shadow_ready = 0;
+        tvram_shadow_building = 1;
+        memset(tvram_shadow, 0, sizeof tvram_shadow);
+        uint8* p = tvram_shadow;
         *p++ = 'E';
         *p++ = '0' + ntsc_diag_error / 10;
         *p++ = '0' + ntsc_diag_error % 10;
@@ -190,19 +222,27 @@ bool timer(repeating_timer_t* rt) {
         *p++ = '0' + f % 10;
         //E番号が見えるよう、先頭8セルの属性を白(前景7/背景0)にする
         for (int i = 0; i < 8; i++) {
-            TVRAM[IJ_ATTROFFSET + i] = 0x07;
-            TVRAM[ATTROFFSET + i] = 0x07;
+            tvram_shadow[IJ_ATTROFFSET + i] = 0x07;
+            tvram_shadow[ATTROFFSET + i] = 0x07;
         }
+        tvram_shadow_building = 0;
+        tvram_shadow_ready = 1;
         //エラー時は内蔵WS2812を赤で高速点滅させて知らせる
         static bool diag_led;
         if ((frames & 7) == 0) {
             diag_led = !diag_led;
             led_builtin_red(diag_led);
         }
-     } else {
+    } else {
+        tvram_shadow_ready = 0;
+        tvram_shadow_building = 1;
         vram_to_tvram_all(_g.cursorflg);
-        //通常時は内蔵WS2812 (GP16) は消灯。ハートビートは廃止 (WS.LED 0 / 起動・エラー表示専用)
+        tvram_shadow_building = 0;
+        tvram_shadow_ready = 1;
     }
+    //TVRAMへの反映はフィールド境界フック (field_display_update) のmemcpyで行う。
+    //60Hzタイマーからの非同期コピーはフィールドとのうなりで約5.4秒周期の
+    //ティア線/画面ジャンプを生じていたため
     //中でsleep_ms()が呼ばれたときに止まるので、本来タイマーの中でtuh_task()を呼び出してはいけないが、なぜか動いている
     //pico-sdk/lib/tinyusb/src/osal/osal_pico.h　のosal_task_delay()のsleepをwhileループに置き換えると解決する
     tuh_task();
@@ -255,8 +295,16 @@ void pico_init() {
 
     vreg_set_voltage(VREG_VSEL);
     sleep_ms(10);//電圧が安定してからクロックを上げる
-    // Run system at NTSC clock (157.5MHz)
-    set_sys_clock_khz(157500, true);
+    // Run system at NTSC clock.
+    // S_D (既定): 157.333333MHz = PLL VCO 1416MHz / 9。整数kHzでないためPLL直接設定。
+    // S_A/S_B/S_C: 157.5MHz = 整数kHzなのでset_sys_clock_khzを使用。
+    if (clock_get_hz(clk_sys) != NTSCV_SYS_CLOCK_HZ) {
+#if NTSCV_SIG_PRESET == 0
+        set_sys_clock_pll(NTSCV_SYS_PLL_VCO_HZ, 3, 3);
+#else
+        set_sys_clock_khz(157500, true);
+#endif
+    }
 
     stdio_uart_init();//クロックを変えてから初期化する
     // uart_set_hw_flow(UART_ID, false, false);//いる？

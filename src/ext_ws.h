@@ -6,10 +6,10 @@
 #include "hardware/pio.h"
 #include "ws2812.pio.h"
 
-//1クロックの時間 (NTSC:157.5MHz=約6.3ns)
-//100nsあたりのNOP数: 157.5MHz→16個
+//1クロックの時間 (NTSC:157.333333MHz=約6.36ns)
+//100nsあたりのNOP数: 157.333333MHz→16個
 #define NOP4_1575 __asm volatile("nop");__asm volatile("nop");__asm volatile("nop");__asm volatile("nop");
-#define SLEEP_100NS_NTSC NOP4_1575 NOP4_1575 NOP4_1575 NOP4_1575 //16 nop=約102ns (157.5MHz)
+#define SLEEP_100NS_NTSC NOP4_1575 NOP4_1575 NOP4_1575 NOP4_1575 //16 nop=約102ns (157.333333MHz)
 
 //WS2812B (800kHz) の1ビット分のNOPグループ (1グループ=約102ns)
 //規格: T0H 0.40us / T1H 0.80us / T0L 0.85us / T1L 0.45us (各±0.15us)
@@ -22,15 +22,20 @@
 #define WS_LOW_1  SLEEP_100NS_NTSC SLEEP_100NS_NTSC SLEEP_100NS_NTSC
 
 //1ビット送信 (pinを引数化してハートビートとの共有グローバル競合を排除)
-//bit=1: High 約810ns + Low 約450ns、bit=0: High 約400ns + Low 約800ns
-static void __noinline __not_in_flash_func(wsled_send_one_signal_1575) (uint8 pin, bool bit) { //NTSCモード (157.5MHz)
-    gpio_put(pin, true);
+//invert=1で波形を完全反転 (逆相ドライバ/トランジスタ経由のWS2812用。アイドルもHiになる)
+//パルス開始/終了レベルはbitに依存させない (正相=開始Hi/終了Lo、反転=開始Lo/終了Hi)。
+//bitは各相の継続時間を選ぶだけ。レベルをbitに連動させるとbit=0のスロットがLo→Hiになり
+//隣接ビットのHiパルスと連結してWS2812のデコードが破綻する (さらにラインがHiのまま
+//放置されてリセット期間が取れなくなる)
+//bit=1: High 約810ns + Low 約450ns、bit=0: High 約400ns + Low 約800ns (invert=0時)
+static void __noinline __not_in_flash_func(wsled_send_one_signal_1575) (uint8 pin, bool bit, bool invert) { //NTSCモード (157.333333MHz)
+    gpio_put(pin, !invert);
     if (bit) {
         WS_HIGH_1
     } else {
         WS_HIGH_0
     }
-    gpio_put(pin, false);
+    gpio_put(pin, invert);
     if (bit) {
         WS_LOW_1
     } else {
@@ -83,6 +88,7 @@ static PIO ws_pio;
 static uint ws_pio_sm;
 static uint ws_pio_offset;
 static int ws_pio_state; //0=未初期化、1=使用可、-1=確保失敗
+static bool ws_pio_invert_patched = false; //PIO命令メモリへ適用済みの反転状態 (WS.SETUP invert)
 
 static bool ws_pio_init(void) {
     if (ws_pio_state != 0) {
@@ -96,37 +102,47 @@ static bool ws_pio_init(void) {
     return true;
 }
 
-//ピンをPIOに接続し、SMを最初の命令で停止させてLowを保持したままリセット時間を作る
-static void ws_pio_configure(uint8 pin) {
-    //SIO出力がHIGHになっている場合 (OUT n,1/LED 1後等) も、PIO切替前に確実にLOWへ
+//ピンをPIOに接続し、SMを最初の命令で停止させてアイドルレベルを保持したままリセット時間を作る
+//(invert=1時はアイドルHi。SM停止中もstall命令のside-setが出力され続けるため反転アイドルを維持)
+static void ws_pio_configure(uint8 pin, bool invert) {
+    //SIO出力の残存状態に関わらず、PIO切替前に確実にアイドルレベルへ
     //SIOラッチ操作はパッドに直接影響しないので、PIO機能中でも安全
-    gpio_put(pin, false);
+    gpio_put(pin, invert);
     gpio_set_dir(pin, GPIO_OUT);
 
     pio_sm_set_enabled(ws_pio, ws_pio_sm, false);
     pio_sm_clear_fifos(ws_pio, ws_pio_sm);
     pio_sm_restart(ws_pio, ws_pio_sm);
+    //信号反転: side-setビット (bit12) をXORしてPIOプログラムの波形極性を反転する
+    //(本プログラムは全命令がside-set 1bitを持つため全命令への一様なXORで良い。
+    // 命令メモリはプログラム共用なので適用状態を追跡し、変化した時だけ書込む)
+    if (ws_pio_invert_patched != invert) {
+        for (uint i = 0; i < ws2812_program.length; i++) {
+            ws_pio->instr_mem[ws_pio_offset + i] ^= 0x1000;
+        }
+        ws_pio_invert_patched = invert;
+    }
     ws2812_program_init(ws_pio, ws_pio_sm, ws_pio_offset, pin, 800000.0f, false);
     gpio_set_drive_strength(pin, GPIO_DRIVE_STRENGTH_12MA);//5Vストリップ向けに信号マージンを確保
     gpio_set_slew_rate(pin, GPIO_SLEW_RATE_FAST);
     sleep_us(WS_RESET_US); //リセット信号 (WS2812B-2020世代のTreset>280µsにマージン)
 }
 
-static void ws_pio_release(uint8 pin) {
+static void ws_pio_release(uint8 pin, bool invert) {
     pio_sm_set_enabled(ws_pio, ws_pio_sm, false);
     pio_sm_clear_fifos(ws_pio, ws_pio_sm);
     gpio_init(pin);
     gpio_set_dir(pin, GPIO_OUT);
-    gpio_put(pin, false);
+    gpio_put(pin, invert); //アイドルレベル (反転時はHi)
 }
 
 //PIO確保失敗時のみ使う従来方式 (割込み禁止区間がある)
-static void __noinline __not_in_flash_func(ws_bitbang_out) (uint8 pin, int nled, int repeat) {
+static void __noinline __not_in_flash_func(ws_bitbang_out) (uint8 pin, int nled, int repeat, bool invert) {
     gpio_init(pin);
     gpio_set_dir(pin, GPIO_OUT);
     gpio_set_drive_strength(pin, GPIO_DRIVE_STRENGTH_12MA);
     gpio_set_slew_rate(pin, GPIO_SLEW_RATE_FAST);
-    gpio_put(pin, false);
+    gpio_put(pin, invert); //アイドルレベル (反転時はHi)
     sleep_us(WS_RESET_US); //リセット信号
     //repeat分を1つの割込み禁止区間で連続送信 (フレーム間にリセットが入らない)
     //最悪でも2730px×3×8×1.26µs≈82ms/1repeat (mode3) で、NTSC表示はDMAで維持される
@@ -138,12 +154,13 @@ static void __noinline __not_in_flash_func(ws_bitbang_out) (uint8 pin, int nled,
             uint8 rgb[3] = { g, r, b }; //GRB順 (MSBファースト)
             for (int j = 0; j < 3; j++) {
                 for (int bi = 7; bi >= 0; bi--) {
-                    wsled_send_one_signal_1575(pin, (rgb[j] >> bi) & 0x01);
+                    wsled_send_one_signal_1575(pin, (rgb[j] >> bi) & 0x01, invert);
                 }
             }
         }
     }
     restore_interrupts(save);
+    gpio_put(pin, invert); //アイドルレベルへ戻す (反転時はHi)
     //長い割込み禁止中はDMAリングの再構築 (compose) が止まり、復帰後の
     //合流処理では1スロットしか進められずarm_nextが実再生位置からずれる。
     //ずれは自己修復しないため (VSYNCが内容に対してずれた位置に合成され、
@@ -181,17 +198,21 @@ static void __noinline ws_out(int port, int nled, int repeat) {
         if (nled > avail) nled = avail;
     }
     if (nled < 1) return; //オフセット以降にデータがない
+    if (ws_setup_leds > 0 && nled > ws_setup_leds) {
+        nled = ws_setup_leds; //WS.SETUPで設定したLED数上限へ切詰め (上限超過分のLEDは色を保持)
+    }
     // 0=基板内蔵WS2812(GP16)、7=外部WS2812(GP15)、8=LED(GP2)、1-6=OUT1-6
     uint8 pin = (port == 0) ? led_builtin_pin : ((port == 7) ? WS2812_PIN : ((port == 8) ? LED : out_pins[port - 1]));
+    bool inv = (port != 0) && (ws_setup_invert != 0); //内蔵WS2812 (WS.LED 0) は常に正相
     if (sd_pin_reserved(pin)) {
         return;//SD動作中の共有ピン (OUT1/3/4) はWS2812出力禁止
     }
     if (!ws_pio_init()) { //PIOを確保できない場合のみ従来方式
-        ws_bitbang_out(pin, nled, repeat);
+        ws_bitbang_out(pin, nled, repeat, inv);
         return;
     }
 
-    ws_pio_configure(pin);//この中でリセットを出す
+    ws_pio_configure(pin, inv);//この中でリセットを出す
     //repeat回数分、リセットを挟まず連続送信する (公式IchigoJam仕様:
     //n個分のパターンが後続LEDへ流れて、テープ長分タイル状に繰り返される。
     //repeatでも毎回オフセットから同じデータを再読み込みする)
@@ -207,12 +228,12 @@ static void __noinline ws_out(int port, int nled, int repeat) {
         tight_loop_contents();
     }
     sleep_us(WS_RESET_US + 30); //最後の1ワード(約30us) + リセット(WS_RESET_US) でラッチ
-    ws_pio_release(pin);
+    ws_pio_release(pin, inv);
 }
 
 //===== 基板内蔵WS2812 (GP16) — 起動表示・診断表示用 =====
 //LEDコマンド/OUT7はGP2を制御 (io.h)。WS.LED 7はGP15(外部WS2812)、WS.LED 8はGP2、WS.LED 0はGP16
-//GP16は本関数群から制御される: 起動時の5回緑点滅、エラー時の高速赤点滅
+//GP16は本関数群から制御される: 起動時の1回緑点滅、エラー時の高速赤点滅
 
 // 指定GRB色で1LED送信 (bitbang、割込み禁止区間あり)
 static void __noinline __not_in_flash_func(led_builtin_color) (uint32_t grb) {
@@ -225,7 +246,7 @@ static void __noinline __not_in_flash_func(led_builtin_color) (uint32_t grb) {
     sleep_us(300); //リセット信号
     int save = save_and_disable_interrupts();
     for (int k = 23; k >= 0; k--) {
-        wsled_send_one_signal_1575(pin, (grb >> k) & 0x01u);
+        wsled_send_one_signal_1575(pin, (grb >> k) & 0x01u, false); //起動・診断表示は常に正相
     }
     restore_interrupts(save);
 }
@@ -245,9 +266,9 @@ void led_builtin(bool on) {
     led_builtin_green(on);
 }
 
-// 起動時: 緑を5回点滅 (約500ms ON / 500ms OFF、計約5秒) して消灯
+// 起動時: 緑を1回点滅 (約500ms ON / 500ms OFF) して消灯
 void led_builtin_boot_blink(void) {
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 1; i++) {
         led_builtin_green(true);
         sleep_ms(500);
         led_builtin_green(false);

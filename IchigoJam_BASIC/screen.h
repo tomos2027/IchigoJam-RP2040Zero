@@ -295,10 +295,13 @@ S_INLINE void uart_putc(char c);
 //  screen
 
 // ===== NTSCカラー (COLOR / PAL / ATTR) =====
-// 画面は常に32x24。カラー属性は各文字セルに1バイト (下位4bit=前景, 上位4bit=背景)。
+// カラー属性は各文字セルに1バイト (下位4bit=前景, 上位4bit=背景)。
 // 既定パレットは phyllosoma / オリジナル IchigoJam-RP2040Zero と同じ並び (B,R,G ビット)。
-#define SCREEN_ATTR_MAX (32 * 24)
+// 32x24 から 42x27 まで可変。最大サイズ分を確保しておく。
+#define SCREEN_ATTR_MAX (WIDTH_X * WIDTH_Y)
 static uint8 screen_attr[SCREEN_ATTR_MAX];
+// VIDEO 10 (42x27 カラーテキスト) 用の拡大VRAM。IJ/80桁モードでは未使用。
+static uint8 vram_wide[WIDTH_X * WIDTH_Y];
 static uint8 screen_pal[16];
 static uint8 screen_fg = 7;        // 現在の前景色 (既定パレットで 7=白)
 static uint8 screen_bg = 0;        // 現在の背景色 (既定パレットで 0=黒)
@@ -400,7 +403,12 @@ void screen_set_attr(int x, int y, int a) {
 }
 
 INLINE void screen_clear() {
-	vram = (uint8*)RAM_VRAM;
+	// VIDEO 10 (42x27) では固定VRAM領域ではなくvram_wideを使う
+	if (videomode == VMODE_WIDETEXT || videomode == VMODE_WIDEGRPH) {
+		vram = vram_wide;
+	} else {
+		vram = (uint8*)RAM_VRAM;
+	}
 	_g.cursorx = _g.cursory = 0;
 	memclear4(vram, SCREEN_W * SCREEN_H);
 	screen_attr_fill(0, SCREEN_W * SCREEN_H, screen_attr_current());

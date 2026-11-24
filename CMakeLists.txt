@@ -80,6 +80,12 @@ pico_enable_stdio_uart(IchigoJam_RP2040Zero 1)
 # create map/bin/hex file etc.
 pico_add_extra_outputs(IchigoJam_RP2040Zero)
 
+# 信号プリセット: 0=S_D(既定), 1=S_A(元ドライバ再現), 2=S_B(262p+EQ/SERR), 3=S_C(525i@157.5MHz)
+# 切り分けビルド時に -DNTSCV_SIG_PRESET=N を指定する (未指定なら0)
+if (NTSCV_SIG_PRESET)
+    target_compile_definitions(IchigoJam_RP2040Zero PRIVATE NTSCV_SIG_PRESET=${NTSCV_SIG_PRESET})
+endif()
+
 # 映像調整用: -DNTSCV_BOOT_TESTPATTERN=1 (SMPTEカラーバー) / =2 (グリッド) で
 # 起動時にNTSCテストパターンを表示する (通常ビルドでは無効)
 if (NTSCV_BOOT_TESTPATTERN)

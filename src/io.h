@@ -21,14 +21,17 @@
 #define OUT5 12 // 側面パッド (IchigoJam_PのGP22から変更: 裏面パッド不使用のため)
 #define OUT6 13 // 側面パッド (IchigoJam_PのGP21から変更: 裏面パッド不使用のため)
 #define SOUND 14 // 側面パッド (sound.hで定義、IchigoJam_PのGP20から変更)
-//GP16: 基板内蔵WS2812 (WS.LED 0 / 起動・エラー診断用、LEDコマンドでは使用しない)
+//GP16: 基板内蔵WS2812 (WS.LED 0 / 起動・エラー診断用、LEDコマンドでも制御)
+
+// ext_ws.h で定義される内蔵WS2812制御関数 (all_includes.h の include 順のため前方宣言)
+static void led_builtin_color(uint32_t grb);
 
 #define IO_PIN_NUM 11
 
 #define PLEN_MAX 2000
 #define ANA_THRESHOLD (1024 / 4)
 
-//ラズパイの動作クロックはNTSC駆動の157.5MHz
+//ラズパイの動作クロックはNTSC駆動の157.333333MHz
 //PWMコマンド: PWM port,plen[,period]
 //  period 省略/>=0 : 0.01msec単位 (1MHzカウンタ)。period=2000で20msec (50Hz、サーボ用)
 //  period < 0      : 高速モード。plen/|period| は 1/48µs 単位。
@@ -238,7 +241,8 @@ void IJB_out(int port, int st) {
 }
 
 INLINE void IJB_led(int st) {
-    IJB_out(7, st != 0);
+    // LED 1: 内蔵WS2812 (GP16) を光度半分の赤色で点灯、LED 0: 消灯
+    led_builtin_color(st ? 0x002000u : 0x000000u);
 }
 
 INLINE int IJB_ana(int n) {

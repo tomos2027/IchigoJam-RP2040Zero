@@ -8,12 +8,15 @@ Copyright (c) 2026 the IchigoJam-RP2040Zero authors. MIT license.
 (__not_in_flash_func → .time_critical) とし、XIPフラッシュの
 実行待ちでライン期限 (127µs) が揺らがないようにする。
 
-バッファ永続化契約 (1DMA転送=2走査線):
+バッファ永続化契約 (1DMA転送=2走査線、フレーム525ライン=262.5チャンク):
   - 有効映像ラインは内容部 (172..843) のみ書き換える。同期+ポーチ部と
-    末尾はブランキング領域の全書き込み (ライン10-13) で書かれた内容が
-    フィールド中ずっとバッファに残り、毎ライン再利用される。
-  - 垂直同期は先頭4ライン、各ブランキングは先頭4ラインのみ全書き込みし、
-    残りは書き込まない (2チャンク前の内容がそのまま再生される)。
+    末尾はアンカーの全書き込み (f1: ライン10-17、f2: 273-280) で書かれた
+    内容がフィールド中ずっとバッファに残り、毎ライン再利用される
+    (チャンクは8ライン刻みで再構築されるため、後退8ライン連鎖は8ライン幅の
+    アンカー窓を必ず通る — f2有効映像はf2アンカー、f1有効映像はf1アンカーに到達)。
+  - 垂直同期 (f1: 0-9、f2: 262-272) とアンカー、消去域 (f1: 252-260、
+    f2: 514-522) は毎フレーム全書き込みし、261/523/524は書き込まない
+    (消去済みラインの内容がそのまま再生される)。
   - ntscv_running=0 の間は一切書き込まない (ntscv_stop はエンジン自体を
     解放するため通常到達しない安全策。停止中は同期信号も出ない)。
 
@@ -23,6 +26,7 @@ VRAMは呼び出し側が所有・登録した配列を読むだけ (ライブ�
 
 #include "ntscv.h"
 #include "hardware/sync.h"
+#include "pico/time.h"
 #include <string.h>
 #include <assert.h>
 
@@ -113,6 +117,61 @@ static void __not_in_flash_func(emit_head)(uint16_t *dst, bool with_burst)
                      - NTSCV_BREEZEWAY_SAMPLES - NTSCV_BURST_CYCLES * 4,
                  NTSCV_LEVEL_BLACK);
 }
+
+/* ブランキング1ライン分 (ヘッド+黒) を全書き込みする */
+static void __not_in_flash_func(emit_blank_line)(uint16_t *lp, bool with_burst)
+{
+    emit_head(lp, with_burst);
+    fill_samples(lp + NTSCV_LINE_HEAD_SAMPLES,
+                 NTSCV_SAMPLES_PER_LINE - NTSCV_LINE_HEAD_SAMPLES,
+                 NTSCV_LEVEL_BLACK);
+}
+
+/* 均等化パルス行: 行頭と半ライン中央に規格幅 (H同期の半分) の同期パルス
+   (NTSC標準形式。パルス列が半ライン間隔で並び、TVの同期分離器が
+   フィールドパリティを判定できる。幅がH同期と同じだとTVがEQをH同期として
+   数えてラインカウンタがずれ、垂直がフリーランするため半幅が必須) */
+static void __not_in_flash_func(emit_eq_line)(uint16_t *lp)
+{
+    uint16_t half = NTSCV_SAMPLES_PER_LINE / 2; /* 半ライン 454サンプル */
+    uint16_t eq = NTSCV_EQ_PULSE_SAMPLES;       /* EQ幅 34サンプル ≈ 2.38us */
+    fill_samples(lp, eq, NTSCV_LEVEL_SYNC);
+    fill_samples(lp + eq, half - eq, NTSCV_LEVEL_BLACK);
+    fill_samples(lp + half, eq, NTSCV_LEVEL_SYNC);
+    fill_samples(lp + half + eq,
+                 NTSCV_SAMPLES_PER_LINE - half - eq, NTSCV_LEVEL_BLACK);
+}
+
+/* セレーション行: ほぼ同期レベルで半ライン境界手前にH同期幅の黒の切れ目 */
+static void __not_in_flash_func(emit_serr_line)(uint16_t *lp)
+{
+    uint16_t half = NTSCV_SAMPLES_PER_LINE / 2;
+    uint16_t serr = half - NTSCV_H_SYNC_SAMPLES;
+    fill_samples(lp, serr, NTSCV_LEVEL_SYNC);
+    fill_samples(lp + serr, NTSCV_H_SYNC_SAMPLES, NTSCV_LEVEL_BLACK);
+    fill_samples(lp + half, serr, NTSCV_LEVEL_SYNC);
+    fill_samples(lp + half + serr,
+                 NTSCV_SAMPLES_PER_LINE - half - serr, NTSCV_LEVEL_BLACK);
+}
+
+#if NTSCV_LONG_SYNC_VSYNC
+/* ロング同期行: 元ドライバの垂直同期 (同期[0,840) + 黒[840,908))。
+   S_Aプリセットでのみ使用。半ライン間隔のパルス列を持たない。 */
+static void __not_in_flash_func(emit_long_sync_line)(uint16_t *lp)
+{
+    fill_samples(lp, NTSCV_LONG_SYNC_SAMPLES, NTSCV_LEVEL_SYNC);
+    fill_samples(lp + NTSCV_LONG_SYNC_SAMPLES,
+                 NTSCV_SAMPLES_PER_LINE - NTSCV_LONG_SYNC_SAMPLES,
+                 NTSCV_LEVEL_BLACK);
+}
+#endif
+
+/* フィールド2の垂直同期は半ライン遅れ (真インターレース)。そのため
+   パルス列の位相が半ラインずつずれ、以下の4種の「混成ライン」が必要になる:
+   - EQ_LATE  (ライン262): 前半ブランキング + 後半に最初の均等化パルス (262.5)
+   - EQ_SERR  (ライン265): 前半に最後の均等化パルス (265.0) + 後半セレーション
+   - SERR_EQ  (ライン268): 前半セレーション + 後半に最初の均等化パルス (268.5)
+   - EQ_HALF  (ライン271): 前半に最後の均等化パルス (271.0) + 後半ブランキング */
 
 /*---- IJTEXT: 32×24 白黒、1文字21サンプル×9走査線 (仕様書§3.1) ----*/
 
@@ -287,19 +346,17 @@ static void __not_in_flash_func(render_ij_color)(uint16_t *w, int l)
 
 /*---- カラーテキスト: 42×27、1ドット2サンプル (旧ドライバWIDETEXTと同一構造) ----
   1文字16サンプル = 搬送波4周期。偶数ドット=パレット位相0-1、奇数ドット=位相2-3。
-  文字ドット = 属性の前景色、背景ドット = 属性の背景色 (生パレット値)。 */
+  文字ドット = 属性の前景色、背景ドット = 属性の背景色 (生パレット値)。
+  カーソル/反転は vram_to_tvram_all で属性の前景/背景を入替えて shadow に書くため、
+  描画側では cursor 処理不要 (VIDEO 9 と同じ方式)。 */
 static void __not_in_flash_func(render_color_text)(uint16_t *w, int l)
 {
     int row = l >> 3;
     int fline = l & 7;
     const uint8_t *code = ntscv_vram_codes + row * NTSCV_COLOR_COLS;
     const uint8_t *attr = ntscv_vram_attrs + row * NTSCV_COLOR_COLS;
-    /* カーソルセル (32x24座標 → 42x27グリッドは左上配置なので行=>>5, 列=&31) */
-    int crow = ntscv_ij_cursor_cell >> 5;
-    int ccol = ntscv_ij_cursor_cell & 31;
     for (int i = 0; i < NTSCV_COLOR_COLS; i++) {
         uint8_t bits = ntscv_font[code[i] * 8 + fline];
-        if (row == crow && i == ccol) bits ^= ntscv_ij_cursor_xor;
         const uint32_t *fg = ntscv_palette[attr[i] & 15];
         const uint32_t *bg = ntscv_palette[(attr[i] >> 4) & 15];
         for (int j = 0; j < 4; j++) {
@@ -510,20 +567,66 @@ static bool __not_in_flash_func(with_burst_now)(void)
 void ntscv_compose_safety_chunk(uint16_t *dst)
 {
     for (int i = 0; i < NTSCV_CHUNK_LINES; i++) {
-        uint16_t *lp = dst + (size_t)i * NTSCV_SAMPLES_PER_LINE;
-        emit_head(lp, false);
-        fill_samples(lp + NTSCV_LINE_HEAD_SAMPLES,
-                     NTSCV_SAMPLES_PER_LINE - NTSCV_LINE_HEAD_SAMPLES,
-                     NTSCV_LEVEL_BLACK);
+        emit_blank_line(dst + (size_t)i * NTSCV_SAMPLES_PER_LINE, false);
+    }
+}
+
+/* 一時診断: フィールド周期の異常検出 (画面揺れ/ロールの原因切り分け用)。
+   フレームマークラインの合成時刻を計測し、フィールド周期が理論値
+   (262.5ライン×63.483µs≒16664µs) から ±1ms 以上外れた回数を数える。
+   合成が定時 (merge_events不変) でも信号にライン欠け等があればここに現れる */
+static volatile uint32_t field_mark_last_us = 0;
+static volatile uint16_t field_anomalies = 0;
+
+uint16_t ntscv_debug_field_anomalies(void)
+{
+    return field_anomalies;
+}
+
+/* フィールド境界フック: フレームマークライン (252/514) の合成時に1回呼ばれる
+   (DMA割込み内)。マークライン直後はVSYNC+ブランキングの非表示窓
+   (約46ライン≒2.9ms) が続くため、TVRAMコピー等の表示更新をこの窓で行うと
+   ティアリングが完全に無くなる。
+   (60Hzタイマーから非同期コピーすると、うなりでティア線が画面を一周し、
+   画面ジャンプ/ロールに見えていた) */
+static void (*field_hook_cb)(void) = 0;
+
+void ntscv_set_field_hook(void (*cb)(void))
+{
+    field_hook_cb = cb;
+}
+
+/* 有効映像1ライン分の内容部 (サンプル172..843) を現在のモードで描画する。
+   l: フィールド内の有効映像ライン (0..215) */
+static void __not_in_flash_func(render_line_active)(uint16_t *lp, int l)
+{
+    uint16_t *act = lp + NTSCV_LINE_HEAD_SAMPLES;
+    if (!ntscv_font || !ntscv_vram_codes || !ntscv_vram_attrs) {
+        fill_samples(act, NTSCV_ACTIVE_SAMPLES, NTSCV_LEVEL_BLACK);
+        return;
+    }
+    int tp = ntscv_test_mode;
+    if (tp == 1) {
+        render_bars(act, l);
+    } else if (tp == 2) {
+        render_grid(act, l);
+    } else if (tp == 3) {
+        render_diag(act, l); /* IJ経路診断 (実フォント/TVRAMの切り分け) */
+    } else if (ntscv_mode == NTSCV_MODE_IJ_TEXT) {
+        render_ij(act, l);
+    } else if (ntscv_mode == NTSCV_MODE_IJ_COLOR) {
+        render_ij_color(act, l);
+    } else if (ntscv_mode == NTSCV_MODE_MONO_TEXT) {
+        render_mono80(act, l);
+    } else if (ntscv_mode == NTSCV_MODE_COLOR_GRAPH) {
+        render_color_graph(act, l);
+    } else {
+        render_color_text(act, l);
     }
 }
 
 void __not_in_flash_func(ntscv_compose_chunk)(uint16_t *dst, uint16_t first_line)
 {
-    /* 有効映像の直後のラインでフレームシーケンスを進める (旧drawcount互換)。
-       停止中も進めるので映像待ちループが固まらない。 */
-    if (first_line == NTSCV_FRAME_MARK_LINE) ntscv_frame_seq++;
-
     /* 停止中は書き込まない (ntscv_stopはエンジン自体を解放するため通常は不到達の安全策) */
     if (!ntscv_running) return;
 
@@ -531,80 +634,183 @@ void __not_in_flash_func(ntscv_compose_chunk)(uint16_t *dst, uint16_t first_line
     bool with_burst = with_burst_now();
 
     for (int i = 0; i < NTSCV_CHUNK_LINES; i++) {
+        /* フレームは525ライン (奇数) のため、境界を跨ぐチャンク (524, 0) は
+           ここでライン番号を折り返して処理する (mod算術が全ラインを自動追跡) */
         uint16_t line = first_line + (uint16_t)i;
+        if (line >= NTSCV_LINES_PER_FRAME) {
+            line = (uint16_t)(line - NTSCV_LINES_PER_FRAME);
+        }
         uint16_t *lp = dst + (size_t)i * NTSCV_SAMPLES_PER_LINE;
 
-        if (line < NTSCV_FIELD_VSYNC_LINES) {
-            /* 垂直同期: 先頭8ライン (4チャネル分) だけ全書き込み。
-               残り2ラインは各チャネルが4スロット前の自バッファ内容を再生 */
-            if (line < 8) {
-                fill_samples(lp, NTSCV_SAMPLES_PER_LINE - NTSCV_H_SYNC_SAMPLES,
-                             NTSCV_LEVEL_SYNC);
-                fill_samples(lp + NTSCV_SAMPLES_PER_LINE - NTSCV_H_SYNC_SAMPLES,
-                             NTSCV_H_SYNC_SAMPLES, NTSCV_LEVEL_BLACK);
-            }
-            continue;
-        }
-
-        if (line < NTSCV_ACTIVE_START) {
-            /* ブランキング (前): 先頭8ライン (10-17) だけ全書き込みし
-               各チャネルのヘッドを確立。残りは再生 */
-            if (line < NTSCV_ACTIVE_START - 18) { /* ライン10-17 */
-                emit_head(lp, with_burst);
-                fill_samples(lp + NTSCV_LINE_HEAD_SAMPLES,
-                             NTSCV_SAMPLES_PER_LINE - NTSCV_LINE_HEAD_SAMPLES,
-                             NTSCV_LEVEL_BLACK);
-            }
-            continue;
-        }
-
-        if (line < NTSCV_FRAME_MARK_LINE) {
-            /* 有効映像: 内容部 (サンプル172..843) のみ書き換え。
-               ヘッド/末尾はライン10-17の全書き込みが永続する */
-            uint16_t *act = lp + NTSCV_LINE_HEAD_SAMPLES;
-            int l = (int)line - NTSCV_ACTIVE_START;
-            if (!ntscv_font || !ntscv_vram_codes || !ntscv_vram_attrs) {
-                fill_samples(act, NTSCV_ACTIVE_SAMPLES, NTSCV_LEVEL_BLACK);
-            } else {
-                int tp = ntscv_test_mode;
-                if (tp == 1) {
-                    render_bars(act, l);
-                } else if (tp == 2) {
-                    render_grid(act, l);
-                } else if (tp == 3) {
-                    render_diag(act, l); /* IJ経路診断 (実フォント/TVRAMの切り分け) */
-                } else if (ntscv_mode == NTSCV_MODE_IJ_TEXT) {
-                    render_ij(act, l);
-                } else if (ntscv_mode == NTSCV_MODE_IJ_COLOR) {
-                    render_ij_color(act, l);
-                } else if (ntscv_mode == NTSCV_MODE_MONO_TEXT) {
-                    render_mono80(act, l);
-                } else if (ntscv_mode == NTSCV_MODE_COLOR_GRAPH) {
-                    render_color_graph(act, l);
-                } else {
-                    render_color_text(act, l);
+        if (line == NTSCV_F1_MARK || line == NTSCV_F2_MARK) {
+            /* 有効映像の直後のラインでフィールドシーケンスを進める (旧drawcount互換)。
+               フレームは奇数ラインのためチャンク先頭の偶奇がフレームごとに反転し、
+               マーク検出は行単位で行う (先頭一致だと半分のフィールドで発火しない) */
+            ntscv_frame_seq++;
+            uint32_t now = (uint32_t)time_us_64();
+            uint32_t last = field_mark_last_us;
+            field_mark_last_us = now;
+            if (last != 0) {
+                uint32_t delta = now - last; // 32bit巻き戻し (71.6分毎) でも差分は正しい
+                if (delta < 15664u || delta > 17664u) {
+                    field_anomalies++;
                 }
             }
+            if (field_hook_cb) field_hook_cb();
+        }
+
+        if (line <= NTSCV_F1_VSYNC_END) {
+            /* フィールド1垂直同期 (ライン0-9)。
+               S_Aプリセットでは元ドライバのロング同期 (10ライン連続) を再現。
+               それ以外では規格のEQ/SERR (均等化パルス+セレーション+EQ) + ブランキング。 */
+#if NTSCV_LONG_SYNC_VSYNC
+            emit_long_sync_line(lp);
+#else
+            if (line <= 2 || (line >= 6 && line <= 8)) {
+                emit_eq_line(lp);
+            } else if (line <= 5) {
+                emit_serr_line(lp);
+            } else { /* line == 9: ブランキングヘッド (バースト無し) + 黒 */
+                emit_blank_line(lp, false);
+            }
+#endif
             continue;
         }
 
-        /* 有効映像の直後のブランキング (後): ライン252-259は内容部を黒で
-           消去 (ヘッドは永続)。残り (260-261) は再生 */
-        if (line < NTSCV_LINES_PER_FIELD - 2) { /* ライン252-259 */
+        if (line <= NTSCV_F1_BLANK1_END) {
+            /* f1ブランキング (前): 先頭8ライン (10-17) だけ全書き込みし
+               各チャネルのヘッドを確立。残りは再生 */
+            if (line <= NTSCV_F1_ANCHOR_END) {
+                emit_blank_line(lp, with_burst);
+            }
+            continue;
+        }
+
+        if (line <= NTSCV_F1_ACTIVE_END) {
+            /* f1有効映像: 内容部 (サンプル172..843) のみ書き換え。
+               ヘッド/末尾はライン10-17の全書き込みが永続する */
+            render_line_active(lp, (int)line - NTSCV_F1_ACTIVE_START);
+            continue;
+        }
+
+        if (line <= NTSCV_F1_ERASE_END) { /* ライン252-260 */
+            /* f1のブランキング (後): 内容部を黒で消去 (ヘッドは永続) */
             fill_samples(lp + NTSCV_LINE_HEAD_SAMPLES,
                          NTSCV_ACTIVE_SAMPLES, NTSCV_LEVEL_BLACK);
+            continue;
         }
+        if (line < NTSCV_F2_VSYNC_START) continue; /* 261: 再生 */
+
+        if (line <= NTSCV_F2_VSYNC_END) {
+            /* フィールド2垂直同期 (ライン262-272): f1と同一のパルス列が
+               半ライン遅れで並ぶ (真インターレース)。デインターレーサは
+               この半ラインオフセットでフィールドパリティを確定できる。
+               ライン262/265/268/271は前半と後半でパターンが異なる混成ライン */
+            uint16_t half = NTSCV_SAMPLES_PER_LINE / 2;
+            uint16_t eq = NTSCV_EQ_PULSE_SAMPLES;
+            uint16_t serr = half - NTSCV_H_SYNC_SAMPLES;
+            switch (line) {
+            case 262: /* 前半ブランキング + 均等化パルス (262.5) */
+                fill_samples(lp, half, NTSCV_LEVEL_BLACK);
+                fill_samples(lp + half, eq, NTSCV_LEVEL_SYNC);
+                fill_samples(lp + half + eq,
+                             NTSCV_SAMPLES_PER_LINE - half - eq,
+                             NTSCV_LEVEL_BLACK);
+                break;
+            case 263:
+            case 264:
+            case 269:
+            case 270: /* 均等化パルス (263.0-264.5 / 269.0-270.5) */
+                emit_eq_line(lp);
+                break;
+            case 265: /* 均等化パルス (265.0) + セレーション後半 (265.5-266.5) */
+                fill_samples(lp, eq, NTSCV_LEVEL_SYNC);
+                fill_samples(lp + eq, half - eq, NTSCV_LEVEL_BLACK);
+                fill_samples(lp + half, serr, NTSCV_LEVEL_SYNC);
+                fill_samples(lp + half + serr,
+                             NTSCV_SAMPLES_PER_LINE - half - serr, NTSCV_LEVEL_BLACK);
+                break;
+            case 266:
+            case 267: /* セレーション (266.0-268.0) */
+                emit_serr_line(lp);
+                break;
+            case 268: /* セレーション前半 (268.0-268.5) + 均等化パルス (268.5) */
+                fill_samples(lp, serr, NTSCV_LEVEL_SYNC);
+                fill_samples(lp + serr, NTSCV_H_SYNC_SAMPLES, NTSCV_LEVEL_BLACK);
+                fill_samples(lp + half, eq, NTSCV_LEVEL_SYNC);
+                fill_samples(lp + half + eq,
+                             NTSCV_SAMPLES_PER_LINE - half - eq,
+                             NTSCV_LEVEL_BLACK);
+                break;
+            case 271: /* 均等化パルス (271.0) + 後半ブランキング */
+                fill_samples(lp, eq, NTSCV_LEVEL_SYNC);
+                fill_samples(lp + eq,
+                             NTSCV_SAMPLES_PER_LINE - eq, NTSCV_LEVEL_BLACK);
+                break;
+            default: /* 272: ブランキングヘッド (バースト無し) + 黒 */
+                emit_blank_line(lp, false);
+                break;
+            }
+            continue;
+        }
+
+        if (line <= NTSCV_F2_BLANK1_END) {
+            /* f2ブランキング (前): 先頭8ライン (273-280) だけ全書き込み。
+               残りは再生 */
+            if (line <= NTSCV_F2_ANCHOR_END) {
+                emit_blank_line(lp, with_burst);
+            }
+            continue;
+        }
+
+        if (line <= NTSCV_F2_ACTIVE_END) {
+            /* f2有効映像: 内容部のみ書き換え (ヘッド/末尾は273-280が永続) */
+            render_line_active(lp, (int)line - NTSCV_F2_ACTIVE_START);
+            continue;
+        }
+
+        if (line <= NTSCV_F2_ERASE_END) { /* ライン514-522 */
+            /* f2のブランキング (後): 内容部を黒で消去 (ヘッドは永続) */
+            fill_samples(lp + NTSCV_LINE_HEAD_SAMPLES,
+                         NTSCV_ACTIVE_SAMPLES, NTSCV_LEVEL_BLACK);
+            continue;
+        }
+        /* 523/524: 再生 (書き込まない。消去済み内容がそのまま出る) */
     }
 }
 
 /*---- 仕様の整合性をコンパイル時に確認 ----*/
 
-static_assert(NTSCV_FIELD_VSYNC_LINES + NTSCV_FIELD_BLANK1_LINES +
-              NTSCV_FIELD_ACTIVE_LINES + NTSCV_FIELD_BLANK2_LINES ==
-              NTSCV_LINES_PER_FIELD, "フィールドのライン数構成");
+static_assert(NTSCV_F1_ACTIVE_END - NTSCV_F1_ACTIVE_START + 1 == NTSCV_FIELD_ACTIVE_LINES,
+              "f1有効映像は216ライン");
+static_assert(NTSCV_F1_MARK == NTSCV_F1_ACTIVE_START + NTSCV_FIELD_ACTIVE_LINES,
+              "f1マークは有効映像の直後");
+
+#if NTSCV_FIELDS_PER_FRAME == 2
+/* フィールド2はフィールド1と同一の同期パルス列が半ライン遅れで
+   現れる (真インターレース)。同期ブロックは262-272の11ライン */
+static_assert(NTSCV_F2_VSYNC_START == NTSCV_F1_MARK + 10 &&
+              NTSCV_F2_VSYNC_END == NTSCV_F2_VSYNC_START + 10,
+              "f2同期ブロックはライン262-272");
+static_assert(NTSCV_F2_ACTIVE_START == NTSCV_F2_VSYNC_END + NTSCV_FIELD_BLANK1_LINES,
+              "f2ブランキング(前)はライン273-297の26ライン");
+static_assert(NTSCV_LINES_PER_FRAME == NTSCV_F2_ERASE_END + 3,
+              "フレームは525ライン (消去514-522 + 再生523/524)");
+static_assert(NTSCV_F2_ACTIVE_END - NTSCV_F2_ACTIVE_START + 1 == NTSCV_FIELD_ACTIVE_LINES,
+              "f2有効映像は216ライン");
+static_assert(NTSCV_F2_MARK == NTSCV_F2_ACTIVE_START + NTSCV_FIELD_ACTIVE_LINES,
+              "f2マークは有効映像の直後");
+static_assert(NTSCV_F2_ANCHOR_END == NTSCV_F2_VSYNC_END + 8, "f2アンカーはライン273-280の8ライン");
+static_assert(NTSCV_F2_ERASE_END == NTSCV_F2_MARK + 8, "f2消去書き込みはライン514-522");
+#else
+static_assert(NTSCV_LINES_PER_FRAME == NTSCV_F1_ERASE_END + 2,
+              "プログレッシブ262ライン (消去252-260 + 再生261)");
+#endif
 
 static_assert(NTSCV_LINE_HEAD_SAMPLES + NTSCV_ACTIVE_SAMPLES <= NTSCV_SAMPLES_PER_LINE,
               "ラインのサンプル数構成");
+static_assert(NTSCV_EQ_PULSE_SAMPLES <= NTSCV_H_SYNC_SAMPLES / 2,
+              "均等化パルスはH同期の半幅以下 (同期分離器の幅判別でH同期と区別されるため)");
 static_assert(NTSCV_IJ_TEXT_START % 4 == 0, "有効画素の開始位置は4サンプル境界 (位相整合)");
 
 static_assert(NTSCV_IJ_COLS * NTSCV_IJ_CHAR_SAMPLES == NTSCV_ACTIVE_SAMPLES, "IJ 1行のサンプル数");
@@ -617,11 +823,10 @@ static_assert(NTSCV_MONO80_ROWS * 8 == NTSCV_FIELD_ACTIVE_LINES, "モノクロ�
 static_assert(NTSCV_GRAPH_ROWS == NTSCV_FIELD_ACTIVE_LINES, "グラフィック縦構成");
 static_assert(NTSCV_GRAPH_COLS == NTSCV_COLOR_COLS * 8, "グラフィック横構成");
 
-static_assert(NTSCV_FRAME_MARK_LINE == NTSCV_ACTIVE_START + NTSCV_FIELD_ACTIVE_LINES, "フレーム境界ライン");
-
 static_assert(sizeof(uint16_t) * NTSCV_SAMPLES_PER_LINE % 4 == 0, "バッファは32ビット境界に一致");
-static_assert(NTSCV_LINES_PER_FIELD % NTSCV_CHUNK_LINES == 0, "チャンクとフィールドはライン境界で一致");
 
-/* 全書き込みアンカー範囲 (4チャネルリング: 各領域の先頭8ライン) の閾値確認 */
-static_assert(NTSCV_ACTIVE_START - 18 == 18, "ブランキング全書き込みはライン10-17");
-static_assert(NTSCV_LINES_PER_FIELD - 2 == 260, "消去書き込みはライン252-259");
+/* 全書き込みアンカー/消去範囲 (4チャネルリング: 各領域の先頭8ライン) の確認。
+    アンカーは8ライン幅 — チャンク再構築の後退8ライン連鎖が窓を跳び越えられない
+    ことが永続化契約の前提 (f1有効映像→f1アンカー) */
+static_assert(NTSCV_F1_ANCHOR_END == NTSCV_F1_VSYNC_END + 8, "f1アンカーはライン10-17の8ライン");
+static_assert(NTSCV_F1_ERASE_END == NTSCV_F1_MARK + 8, "f1消去書き込みはライン252-260");

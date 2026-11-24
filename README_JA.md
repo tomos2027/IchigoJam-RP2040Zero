@@ -11,8 +11,9 @@ IchigoJam BASIC 1.6.1 (4K版) の **Waveshare RP2040-Zero** (RP2040) 移植・**
 - **SDカード**: [GivetakeJam_P](https://github.com/Canon-boy4/ichigojam-firm/tree/rp2350-16130) 準拠の**共有ピン方式** (GP6/7/8/10/11、SDON中は該当OUT/INポートをブロック)
 - **アスキー形式 `SAVE n,1` → `Pnnn.BAS` (UTF-8)** でPC連携可
 - **ANA() アナログ入力対応** (IN1=GP27/ADC1、IN2=GP26/ADC0、BTN=GP28/ADC2)
-- **WS2812 NeoMatrix**: `WS.MODE`/`WS.PUT`/`RGB()` に加え、`WS.MATRIX w,h` と `WS.XY x,y,R,G,B` で8x8/5x5パネルへx,y座標で描画 (ジグザグ配線・左右/上下反転対応)
-- **LED / `WS.LED 8,n` は GP2** (WS2812)、**`WS.LED 7,n` は GP15** (外部WS2812)。**`WS.LED 0,n` は基板内蔵WS2812 (GP16)**。GP16 は起動表示・エラー診断にも使用
+- **WS2812 NeoMatrix**: `WS.MODE`/`WS.PUT`/`RGB()` に加え、`WS.MATRIX w,h` と `WS.XY x,y,R,G,B` で8x8/5x5パネルへx,y座標で描画 (ジグザグ配線・左右/上下反転対応)。`WS.SETUP n,offset,invert` でLED数上限・オフセット・出力信号の反転 (逆相ドライバ駆動用) を設定
+- **NEO.* / NEOSCROLL.***: Annex WiFi互換のNeoPixel制御。`NEO.PIXEL`/`NEO.STRIP`/`NEO.ROTATE*` (RGB555パック色・`NEO.RGB()`等の色関数付き) と、8x8ドットマトリクスへのテキスト表示・スクロール (`NEOSCROLL.SETUP`/`PRINT`/`SCROLL`)
+- **`LED 1`/`LED 0` は基板内蔵WS2812 (GP16)** — 1 で光度半分の赤色点灯、0 で消灯。**`WS.LED 8,n` は GP2** (WS2812)、**`WS.LED 7,n` は GP15** (外部WS2812)。GP16 は起動表示・エラー診断にも使用
 - **裏面パッド (GP17-25) は未使用** — すべての機能が側面エッジパッドで完結
 
 ## 対応基板
@@ -38,9 +39,10 @@ IchigoJam BASIC 1.6.1 (4K版) の **Waveshare RP2040-Zero** (RP2040) 移植・**
 | **OUT5** | **GP12** | | (IchigoJam_PのGP22から変更) |
 | **OUT6** | **GP13** | | (IchigoJam_PのGP21から変更) |
 | **SOUND** | **GP14** | | BEEP/PLAY/SOUND (単声PWM / 多声PSGエミュ) (IchigoJam_PのGP20から変更) |
-| **LED / OUT7 / WS.LED 8** | **GP2** | 側面パッド | `LED 1`/`LED 0` (通常GPIO)、`OUT 7,n`、`WS.LED 8,n` (WS2812) |
+| **LED** | **GP16** | 基板実装 | `LED 1`/`LED 0` — 内蔵WS2812を光度半分の赤で点灯/消灯 |
+| **OUT7 / WS.LED 8** | **GP2** | 側面パッド | `OUT 7,n`、`WS.LED 8,n` (WS2812) |
 | **WS.LED 7** | **GP15** | 側面パッド | 外部WS2812のデータ出力 |
-| (内蔵WS2812) | GP16 | 基板実装 | 起動5回緑点滅、`WS.LED 0,n`、エラー時赤高速点滅 |
+| (内蔵WS2812) | GP16 | 基板実装 | 起動1回緑点滅、`WS.LED 0,n`、エラー時赤高速点滅 |
 | **IN2** | GP26 | | **ADC0** アナログ入力可 |
 | **IN1** | GP27 | | **ADC1** アナログ入力可 |
 | **BTN** | GP28 | | **ADC2**、ボタン→GND (内部プルアップ) |
@@ -102,9 +104,9 @@ cmake --build build
 ## スペック
 | 項目 | 値 |
 |---|---|
-| BASIC | IchigoJam BASIC 1.6.1 (4K版、配列[0..357]、`WS.LED`/`WS.MODE`/`WS.PUT`/`WS.MATRIX`/`WS.XY`/`RGB()`) |
+| BASIC | IchigoJam BASIC 1.6.1 (4K版、配列[0..357]、`WS.LED`/`WS.MODE`/`WS.PUT`/`WS.MATRIX`/`WS.XY`/`WS.SETUP`/`NEO.*`/`NEOSCROLL.*`/`RGB()`) |
 | `VER()` / `VER(1)` | 16130 / 8 (RP2040) |
-| クロック | 157.5MHz (NTSC、VREG 1.20V) |
+| クロック | 157.33MHz (NTSC 525ライン/60.0085Hz駆動、VREG 1.20V) |
 | 音声 | BEEP/PLAY単声 (PWM方形波) + 多声最大3声 (AY-3-8910互換PSGエミュ) |
 | 内部保存 | フラッシュ末尾に25本 (1本4096バイト) |
 | SD形式 | FAT32 (MBR/スーパーフロッピー)、8.3名、ルートのみ |
@@ -114,7 +116,7 @@ cmake --build build
 - **SDON中はOUT1/OUT3/OUT4/IN3/IN4がSDカードに占有されます** (GivetakeJam_Pと同じ仕様)。`OUT 2`や`OUT 5`/`OUT 6`、`IN1`/`IN2`はSDON中も使用できます
 - TFカードは**FAT32フォーマット必須** (SDXCはexFATのため再フォーマット、32GB以下推奨)
 - `.BAS` (アスキー形式) はUTF-8で保存。LOADはUTF-8と旧形式の生バイトを自動判別。**漢字は非対応** (かなで記述)
-- 157.5MHzオーバークロックで動作 (IchigoJam_Pと同じ仕様)
+- 157.33MHzオーバークロックで動作 (NTSC映像の60Hzパネルとのうなり抑制のため。IchigoJam_Pは157.5MHz)
 - **OUT5=GP12、OUT6=GP13、SOUND=GP14** はIchigoJam_P (GP22/GP21/GP20) と異なります (裏面パッド不使用のため)
 
 ## ライセンス / License

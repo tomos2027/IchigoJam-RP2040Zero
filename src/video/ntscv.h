@@ -23,32 +23,145 @@ PWM+DMAによるNTSC信号生成の着想は @lovyan03 氏による (手法・�
 extern "C" {
 #endif
 
-/*==== 信号タイミング (docs/ntsc_video_spec.md §2 参照) ====
+/*==== 信号プリセット (コンパイル時切替、docs/ntsc_video_spec.md §2 参照) ====
 
-  システムクロック157.5MHz、PWM周期11サイクル → サンプルレート14.318MHz
-  = NTSCカラーサブキャリア3.579545MHzの4倍 (1周期4サンプル)。
-  1走査線908サンプル (サブキャリア227周期分)、1フィールド262ライン。
-  ※旧ドライバ (実機でカラー表示の実績あり) と同一の幾何に回帰した。
-    910サンプル (227.5周期・ライン毎にバースト位相180°交互) も試したが、
-    実機では色表示の改善が得られず、むしろ起動画面の問題と相関したため廃止。
-  NTSCV_LINES_PER_FIELD (262) は旧ドライバ互換の走査線Tickカウントにも使う。
+   0 (既定 / S_D): 525ライン真インターレース @157.333333MHz, 60.0085Hz (現行)
+   1 (S_A):        262ライン プログレッシブ @157.5MHz, 60.19Hz (元ドライバ再現)
+   2 (S_B):        262ライン プログレッシブ @157.5MHz, 60.19Hz + 規格EQ/SERR同期
+   3 (S_C):        525ライン真インターレース @157.5MHz, 60.07Hz (現行構造、旧クロック)
+
+   既定値(S_D)を指定しないビルドでは、既存動作を変えない。
+   S_A/S_B/S_Cは「線の原因が信号構造のどこか」という切り分け用。
 */
-#define NTSCV_SYS_CLOCK_KHZ   157500u
+#ifndef NTSCV_SIG_PRESET
+#define NTSCV_SIG_PRESET 0
+#endif
+
+#if NTSCV_SIG_PRESET == 0
+/*--- S_D: 525ライン真インターレース (現行) ---*/
+/* システムクロック157.333333MHz (PLL: VCO 1416MHz = 12MHz×fbdiv118、postdiv 3×3)、
+   PWM周期11サイクル → サンプルレート14.30303MHz (色信号は1周期4サンプル構成)。
+   1走査線908サンプル (9988サイクル = 63.483µs)、1フレーム525ライン
+   (262.5ライン×2フィールド = 真のNTSCインターレース: フィールド2の同期系は
+   半ライン (454サンプル) 遅れ。デインターレーサがフィールドパリティを
+   判定でき、液晶TVの1ライン上下揺れ/ボブ反転がなくなる)。
+   フィールド周期 = 262.5×9988/157333333 = 16664.3µs = 60.0085Hz。
+     固定60Hzパネルの液晶TV/キャプチャは入力に同期しないため、フィールドレートが
+     60Hzからずれるとリフレッシュ境界が「薄い線」として画面内を滑る (うなり)。
+     旧262ライン (60.19Hz) はうなり0.19Hz=約5.3秒周期、263ライン (59.96Hz) でも
+     0.042Hz=約23.7秒周期で残っていた。262.5ライン×157.333333MHzの60.0085Hzは
+     うなり0.0085Hz=約117秒周期となり事実上静止する。
+   ※サブキャリア相当周波数 = サンプルレート/4 = 3.5758MHz (公称3.579545MHzより
+     −0.11%)。TVの色復調PLLはバースト周波数に引込むため色相は不変
+     (テストパターン1で実機確認のこと。色ロックしない機種が出た場合は
+     本定数群とLINES_PER_FRAMEを調整してフィールドレートを緩める)。
+   ※910サンプル (227.5周期・ライン毎にバースト位相180°交互) は過去に試したが、
+     実機では色表示の改善が得られず、むしろ起動画面の問題と相関したため廃止。 */
+#define NTSCV_SYS_CLOCK_HZ    157333333u /* = 1416000000/9 (整数kHzでないためset_sys_clock_khzは使えない) */
+#define NTSCV_SYS_PLL_VCO_HZ  1416000000u /* 12MHz×fbdiv118、postdiv1=postdiv2=3 */
+#define NTSCV_FIELDS_PER_FRAME 2
+#define NTSCV_LINES_PER_FRAME 525       /* 262.5ライン×2フィールド (真インターレース) */
+#define NTSCV_F1_VSYNC_END     9        /* ライン0-9  : f1垂直同期                     */
+#define NTSCV_F1_ANCHOR_END    17       /* ライン10-17: ブランキング全書込アンカー     */
+#define NTSCV_F1_BLANK1_END    35       /* ライン18-35: ブランキング(前) — 再生        */
+#define NTSCV_F1_ACTIVE_START  36
+#define NTSCV_F1_ACTIVE_END    251
+#define NTSCV_F1_MARK          252      /* フィールド境界マーク (drawcount/表示更新)   */
+#define NTSCV_F1_ERASE_END     260      /* ライン252-260: 内容部黒消し (261は再生)     */
+#define NTSCV_F2_VSYNC_START   262      /* ライン262-272: f2垂直同期 (半ライン遅れ)    */
+#define NTSCV_F2_VSYNC_END     272
+#define NTSCV_F2_ANCHOR_END    280      /* ライン273-280: アンカー (281-297は再生)     */
+#define NTSCV_F2_BLANK1_END    297
+#define NTSCV_F2_ACTIVE_START  298
+#define NTSCV_F2_ACTIVE_END    513
+#define NTSCV_F2_MARK          514
+#define NTSCV_F2_ERASE_END     522      /* ライン514-522: 内容部黒消し (523/524は再生) */
+
+#elif NTSCV_SIG_PRESET == 1 || NTSCV_SIG_PRESET == 2
+/*--- S_A / S_B: 262ライン プログレッシブ (元ドライバのフレーム構成) ---*/
+/* システムクロック157.5MHz (set_sys_clock_khz(157500) 使用。PLL VCO 1050MHz/7=150MHz
+   ではなく、fbdiv=175, postdiv=2,1? いずれにせよSDK経由で整数kHz設定可能)。
+   1走査線は同じ908サンプル/9988サイクル=63.416µs。
+   フレーム262ライン=16615.4µs → 60.185Hz (元ドライバ実績ありのVレート)。
+   フィールド=フレーム (NTSCV_FIELDS_PER_FRAME=1)。 */
+#define NTSCV_SYS_CLOCK_HZ    157500000u
+#define NTSCV_SYS_PLL_VCO_HZ  0u        /* set_sys_clock_khz経由: core.cでは未使用 */
+#define NTSCV_FIELDS_PER_FRAME 1
+#define NTSCV_LINES_PER_FRAME 262
+#define NTSCV_F1_VSYNC_END     9        /* ライン0-9  : 垂直同期                     */
+#define NTSCV_F1_ANCHOR_END    17       /* ライン10-17: ブランキング全書込アンカー   */
+#define NTSCV_F1_BLANK1_END    35       /* ライン18-35: ブランキング(前) — 再生      */
+#define NTSCV_F1_ACTIVE_START  36
+#define NTSCV_F1_ACTIVE_END    251
+#define NTSCV_F1_MARK          252      /* フレームマーク (drawcount/表示更新)       */
+#define NTSCV_F1_ERASE_END     260      /* ライン252-260: 内容部黒消し (261は再生)   */
+/* プログレッシブ: フィールド2は無し (範囲を空にして判定に引っかからない) */
+#define NTSCV_F2_VSYNC_START   NTSCV_LINES_PER_FRAME
+#define NTSCV_F2_VSYNC_END     (NTSCV_LINES_PER_FRAME - 1)
+#define NTSCV_F2_ANCHOR_END    (NTSCV_LINES_PER_FRAME - 1)
+#define NTSCV_F2_BLANK1_END    (NTSCV_LINES_PER_FRAME - 1)
+#define NTSCV_F2_ACTIVE_START  NTSCV_LINES_PER_FRAME
+#define NTSCV_F2_ACTIVE_END    (NTSCV_LINES_PER_FRAME - 1)
+#define NTSCV_F2_MARK          NTSCV_LINES_PER_FRAME
+#define NTSCV_F2_ERASE_END     (NTSCV_LINES_PER_FRAME - 1)
+
+#elif NTSCV_SIG_PRESET == 3
+/*--- S_C: 525ライン真インターレース (現行構造) @157.5MHz ---*/
+/* フレーム構成はS_Dと同一。クロックのみ元ドライバと同じ157.5MHz。
+   フィールドレート = 60.0707Hz。 */
+#define NTSCV_SYS_CLOCK_HZ    157500000u
+#define NTSCV_SYS_PLL_VCO_HZ  0u
+#define NTSCV_FIELDS_PER_FRAME 2
+#define NTSCV_LINES_PER_FRAME 525
+#define NTSCV_F1_VSYNC_END     9
+#define NTSCV_F1_ANCHOR_END    17
+#define NTSCV_F1_BLANK1_END    35
+#define NTSCV_F1_ACTIVE_START  36
+#define NTSCV_F1_ACTIVE_END    251
+#define NTSCV_F1_MARK          252
+#define NTSCV_F1_ERASE_END     260
+#define NTSCV_F2_VSYNC_START   262
+#define NTSCV_F2_VSYNC_END     272
+#define NTSCV_F2_ANCHOR_END    280
+#define NTSCV_F2_BLANK1_END    297
+#define NTSCV_F2_ACTIVE_START  298
+#define NTSCV_F2_ACTIVE_END    513
+#define NTSCV_F2_MARK          514
+#define NTSCV_F2_ERASE_END     522
+
+#else
+#error "Unknown NTSCV_SIG_PRESET (0-3)"
+#endif
+
+/* 1フレーム内の区分サイズ (プリセット共通で同一値) */
+#define NTSCV_FIELD_VSYNC_LINES 10      /* 垂直同期 = ライン0-9 (10ライン)          */
+#define NTSCV_FIELD_BLANK1_LINES 26     /* ブランキング(前) = 26ライン              */
+#define NTSCV_FIELD_ACTIVE_LINES 216   /* 有効映像 = 216ライン                     */
+
 #define NTSCV_PWM_WRAP        10        /* wrap+1 = 11サイクル = 1サンプル */
-#define NTSCV_SAMPLES_PER_LINE 908      /* 908 / 14.318MHz ≈ 63.42us/line  */
-#define NTSCV_LINES_PER_FIELD 262
+#define NTSCV_SAMPLES_PER_LINE 908      /* 908サンプル = 9988サイクル = 63.483us/line */
 #define NTSCV_CHUNK_LINES 2             /* 1DMA転送=2走査線 (再arm期限127µs) */
 #define NTSCV_CHUNK_SAMPLES (NTSCV_CHUNK_LINES * NTSCV_SAMPLES_PER_LINE) /* 1816 */
 
-/* フィールド内のライン区分 */
-#define NTSCV_FIELD_VSYNC_LINES 10      /* ライン0-9   : 垂直同期            */
-#define NTSCV_FIELD_BLANK1_LINES 26     /* ライン10-35 : ブランキング(前)     */
-#define NTSCV_FIELD_ACTIVE_LINES 216   /* ライン36-251 : 有効映像            */
-#define NTSCV_FIELD_BLANK2_LINES 10    /* ライン252-261: ブランキング(後)     */
-#define NTSCV_ACTIVE_START (NTSCV_FIELD_VSYNC_LINES + NTSCV_FIELD_BLANK1_LINES)
+/* ロング同期用 (元ドライバのvsync): 同期[0,840) + 黒[840,908) */
+#define NTSCV_LONG_SYNC_SAMPLES (NTSCV_SAMPLES_PER_LINE - NTSCV_H_SYNC_SAMPLES)
+
+/* 垂直同期スタイル: S_Aのみ元ドライバのロング同期、それ以外は規格EQ/SERR */
+#if NTSCV_SIG_PRESET == 1
+#define NTSCV_LONG_SYNC_VSYNC 1
+#else
+#define NTSCV_LONG_SYNC_VSYNC 0
+#endif
 
 /* ライン内のサンプル区分 (旧ドライバと同一幾何) */
-#define NTSCV_H_SYNC_SAMPLES 68        /* H同期幅 68/14.318MHz ≈ 4.75us     */
+#define NTSCV_H_SYNC_SAMPLES 68        /* H同期幅 68/14.303MHz ≈ 4.75us     */
+/* 均等化パルス幅: 規格 (SMPTE 170M) どおり H同期の半分幅 (2.335µs→34サンプル)。
+   同期分離器はパルス幅でH同期とEQを区別するため、EQをH同期幅 (68) にすると
+   TVがvsync領域の半ライン中央パルスをH同期として余分に数え、ラインカウンタが
+   1フレーム+10ずれる → TV内部の垂直タイミングがH÷535≒58.9Hzでフリーランし、
+   入力60.0085Hzとの差約1.1Hzでフレーム境界のシームが約0.9秒/周でスクロール
+   (実測「1〜2秒」) し、ラップ毎に瞬間的な上下揺れが出るため半幅必須 */
+#define NTSCV_EQ_PULSE_SAMPLES 34      /* 均等化パルス幅 34/14.303MHz ≈ 2.38us */
 #define NTSCV_LINE_HEAD_SAMPLES 172    /* 有効画素の開始位置 (同期+ポーチ類) */
 #define NTSCV_ACTIVE_SAMPLES 672       /* 有効画素幅 (IJ 32×21、42×16と共通) */
 #define NTSCV_MONO80_ACTIVE_SAMPLES 640 /* モノクロ80文字モードのみ          */
@@ -64,8 +177,7 @@ extern "C" {
 #define NTSCV_COLOR_ACTIVE_SAMPLES 672
 #define NTSCV_MONO80_START 172
 
-/* フレームシーケンスを進めるライン (有効映像の直後) */
-#define NTSCV_FRAME_MARK_LINE (NTSCV_FIELD_VSYNC_LINES + NTSCV_FIELD_BLANK1_LINES + NTSCV_FIELD_ACTIVE_LINES)
+/* フレームシーケンスを進めるライン (有効映像の直後。フィールドごとに2か所) */
 
 /* PWM出力レベル (10段D/A、外部回路は75Ω+560pF) */
 #define NTSCV_LEVEL_SYNC  0   /* 同期チップ  (-40 IRE) */
@@ -113,8 +225,8 @@ extern volatile int16_t ntscv_ij_cursor_cell; /* カラーモード用カーソ�
 /*==== API ===*/
 
 /* NTSC映像出力を初期化して開始する。
-   gpio: 信号出力ピン。クロックは NTSCV_SYS_CLOCK_KHZ (157.5MHz) が
-   呼び出し前に設定されていること (未設定ならここで設定する)。
+   gpio: 信号出力ピン。クロックは NTSCV_SYS_CLOCK_HZ (157.333333MHz、PLL直接設定)
+   が呼び出し前に設定されていること (未設定ならここで設定する)。
    VRAM/フォントはあらかじめ bind 系APIで登録しておくこと。 */
 void ntscv_init(uint8_t gpio);
 
@@ -167,12 +279,21 @@ void ntscv_palette_default(void);
    有効映像域を置き換える (パレット240-246はパターン1が使用する)。 */
 void ntscv_test_pattern(int p);
 
-/* 診断用: 現在の走査ライン (0..261) */
+/* 診断用: 現在の走査ライン (0..524、フレーム内ライン番号) */
 uint16_t ntscv_debug_scanline(void);
 
 /* 診断用: 合流割込み (割込み長期遅延) の累積回数。正常運用では増えない
    (フラッシュ書込等でのみ増え、その後 ntscv_init で再位相する) */
 uint16_t ntscv_debug_events(void);
+
+/* 診断用: フィールド周期の異常 (理論値16664µsから±1ms超過) の累積回数。
+   一時診断 (画面揺れ切り分け用)。正常運用では増えない */
+uint16_t ntscv_debug_field_anomalies(void);
+
+/* フィールド境界 (フレームマークラインの合成時、DMA割込み内) に1回呼ぶコールバックを
+   登録する。直後がVSYNC+ブランキングの非表示窓のため、TVRAMコピー等の表示更新を
+   ティアリング無しで行える (init.hのfield_display_updateが登録する) */
+void ntscv_set_field_hook(void (*cb)(void));
 
 /* 診断用: DMAバッファ前後のガード値 (NTSCV_GUARD_A/B_VALUEと比較して破壊検知) */
 uint32_t ntscv_guard_a(void);
@@ -189,13 +310,17 @@ void ntscv_render_boot_init(void);
 void ntscv_render_palette_changed(void);
 
 /* 2走査線分 (1816サンプル) のチャンクを組み立てる。
-   first_line: チャンク先頭のライン番号 (0..260、常に偶数)。
+   first_line: チャンク先頭のライン番号 (0..524、チャンク列は+2ずつmod 525で巡回。
+   525が奇数のためフレーム境界チャンク (524, 0) は折返し合成し、偶奇パリティは
+   フレームごとに反転する)。
    バッファ永続化契約 (docs/ntsc_video_spec.md §5):
    - 有効映像ラインは内容部 (サンプル172..843) のみ書き換え、
-     同期/ポーチ部と末尾はバッファに残った内容を使い回す
-   - 垂直同期は先頭8ライン、ブランキングは各領域先頭8ラインのみ全書き込みし、
-     残りは書き込まない (4チャネルリング: 各チャネルが4スロット前の
-     自バッファ内容を再生するため、アンカーは4チャネル分必要)
+     同期/ポーチ部と末尾はアンカー全書き込み (f1: ライン10-17、f2: 273-280)
+     の内容をフィールド中ずっと使い回す (後退8ライン連鎖は必ずアンカーに到達:
+     8ライン幅のアンカー窓はステップ8で跳び越せない)
+   - 垂直同期 (f1: 0-9、f2: 262-272) とアンカー、消去域 (f1: 252-260、
+     f2: 514-522) は全書き込みし、261/523/524は書き込まない
+     (4チャネルリング: 4チャネル分のアンカーが必要)
    - 停止中は書き込まない (直前のフィールドが静止画として再生される) */
 void ntscv_compose_chunk(uint16_t *dst, uint16_t first_line);
 

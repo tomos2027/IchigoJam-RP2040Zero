@@ -25,7 +25,13 @@ void recover_from_sleep() {
 
     //rosc再開、クロック復元(clocks_init相当)、UART再設定
     sleep_power_up();
-    set_sys_clock_khz(157500, true);//NTSC駆動クロック
+    if (clock_get_hz(clk_sys) != NTSCV_SYS_CLOCK_HZ) {
+#if NTSCV_SIG_PRESET == 0
+        set_sys_clock_pll(NTSCV_SYS_PLL_VCO_HZ, 3, 3);//NTSC駆動クロック (157.333333MHz)
+#else
+        set_sys_clock_khz(157500, true);//NTSC駆動クロック (157.5MHz)
+#endif
+    }
     set_uart_bps();
     io_reconfig_pwm();//クロックが変わったのでPWMの分周比を再設定
     //スリープ中はtimer()が止まるためウォッチドッグを切ってあるので、ここで再有効化する

@@ -29,7 +29,7 @@ int main() {
     pico_init();
     video_output_init();
     ichigojam_init();
-    led_builtin_boot_blink();   // 起動完了: 内蔵WS2812を緑で5回点滅して消灯
+    led_builtin_boot_blink();   // 起動完了: 内蔵WS2812を緑で1回点滅して消灯
 
     char* linebuf = (char*)ram + OFFSET_RAM_LINEBUF;
     if (*linebuf) {

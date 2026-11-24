@@ -318,7 +318,7 @@ bool __not_in_flash_func(psg_emu_timer_callback)(repeating_timer_t* rt) {
 void sound_set_multi_mode(bool on, bool by_play) {
     if (on) {
         if (!sound_multi_mode) {
-            // 先にPWMをデューティモードへ (クロック無分周: キャリア = 157.5MHz/1024 ≈ 154kHz)。
+            // 先にPWMをデューティモードへ (クロック無分周: キャリア = 157.333333MHz/1024 ≈ 154kHz)。
             // sound_multi_modeは最後に立てる (core1が未設定のPWMへ書かないように)
             pwm_set_enabled(slice_num, false);
             pwm_set_clkdiv(slice_num, 1);

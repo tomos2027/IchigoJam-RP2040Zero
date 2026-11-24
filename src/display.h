@@ -10,15 +10,23 @@
 void ntsc_init();//init.hで定義
 
 void video_on() {
-    SCREEN_W = CHAR_MAX_COLS >> _g.screen_big;
-    SCREEN_H = CHAR_MAX_ROWS >> _g.screen_big;
-    if (ntsc_active()) {
-        return;//動作中なら再初期化不要 (VIDEOコマンドの反転/拡大は内容の変更だけのため)
+    if (!ntsc_active()) {
+        //NTSCはflash書込等で割り込みが長時間止まると走査線カウンタが表示位置からずれるため、
+        //開始するときは毎回チェーンを再初期化して位相を合わせ直す
+        ntsc_release();
+        ntsc_init();
     }
-    //NTSCはflash書込等で割り込みが長時間止まると走査線カウンタが表示位置からずれるため、
-    //開始するときは毎回チェーンを再初期化して位相を合わせ直す
-    ntsc_release();
-    ntsc_init();
+    // 現在のビデオモードに応じてテキスト領域サイズとvramポインタを設定。
+    // VIDEO 10 (42x27 カラーテキスト) では vram_wide を使う。
+    if (videomode == VMODE_WIDETEXT || videomode == VMODE_WIDEGRPH) {
+        vram = vram_wide;
+        SCREEN_W = WIDTH_X;
+        SCREEN_H = WIDTH_Y;
+    } else {
+        vram = (uint8*)RAM_VRAM;
+        SCREEN_W = CHAR_MAX_COLS >> _g.screen_big;
+        SCREEN_H = CHAR_MAX_ROWS >> _g.screen_big;
+    }
 }
 
 //クロックの変更機能はつけない

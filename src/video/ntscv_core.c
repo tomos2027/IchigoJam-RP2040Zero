@@ -20,8 +20,8 @@ Copyright (c) 2026 the IchigoJam-RP2040Zero authors. MIT license.
 完了割込み (DMA_IRQ_1、最高優先度0) で「次に表示するチャンク」の
 内容を完了した側のバッファへ書き込む (arm_next[] = 各チャネルが次に
 表示するチャンクの先頭ライン。1チャンク=8ライン間隔で+8進行し、
-262ライン (=131チャンク、4で割り切れない) のフィールド境界も
-mod 262の算術が自動的に追跡する)。
+525ライン (=262.5チャンク、境界チャンクは折返し合成) のフレーム境界も
+mod 525の算術が自動的に追跡する (gcd(8,525)=1のため全ライン値を巡回))。
 
 割込み合流 (508µs以上の割込み停止) が起きた場合は、その時点で
 ストリーミング中 (BUSY) のチャネルは内容の再構築を諦めて目標だけ
@@ -87,9 +87,10 @@ static volatile uint16_t merge_events = 0;
 
 static inline uint16_t advance_chunk(uint16_t n)
 {
-    /* 1チャネルは4スロット (2ライン×4=8ライン) 先のチャンクを担当する */
+    /* 1チャネルは4スロット (2ライン×4=8ライン) 先のチャンクを担当する。
+       mod 525 (525と8は互いに素 → 全チャンク値を67ステップ弱で巡回する) */
     n = (uint16_t)(n + NTSCV_CHUNK_LINES * NTSCV_DMA_CHANNELS);
-    return n < NTSCV_LINES_PER_FIELD ? n : (uint16_t)(n - NTSCV_LINES_PER_FIELD);
+    return n < NTSCV_LINES_PER_FRAME ? n : (uint16_t)(n - NTSCV_LINES_PER_FRAME);
 }
 
 static void __not_in_flash_func(arm_channel)(int idx)
@@ -130,9 +131,15 @@ void ntscv_init(uint8_t gpio)
     if (engine_inited) ntscv_release();
     diag_log("[B0] ntscv_init");
 
-    /* クロック: 呼び出し側で157.5MHz設定済みのこと (未設定ならここで設定) */
-    if (clock_get_hz(clk_sys) != (uint32_t)NTSCV_SYS_CLOCK_KHZ * 1000u) {
-        set_sys_clock_khz(NTSCV_SYS_CLOCK_KHZ, true);
+    /* クロック: 呼び出し側でNTSCクロック設定済みのこと (未設定ならここで設定)。
+       S_Dのみ157.333333MHzは整数kHzでないためPLL直接設定。
+       S_A/S_B/S_Cは157.5MHz = 整数kHzなのでset_sys_clock_khzを使う。 */
+    if (clock_get_hz(clk_sys) != NTSCV_SYS_CLOCK_HZ) {
+#if NTSCV_SIG_PRESET == 0
+        set_sys_clock_pll(NTSCV_SYS_PLL_VCO_HZ, 3, 3);
+#else
+        set_sys_clock_khz(157500, true);
+#endif
     }
     diag_log("[B0a] clock ok");
 
@@ -314,11 +321,12 @@ void ntscv_set_line_hook(void (*cb)(void))
 
 uint16_t ntscv_debug_scanline(void)
 {
-    /* 現在表示中の走査ライン ≈ ch0の次回表示チャンク先頭 - 8 */
+    /* 現在表示中の走査ライン ≈ ch0の次回表示チャンク先頭 - 8 (mod 525)。
+       破壊検知のため1回の引き算のみ (結果が525以上なら呼び出し側で検知) */
     uint16_t n = arm_next[0];
-    n = (uint16_t)(n + NTSCV_LINES_PER_FIELD
-                     - NTSCV_CHUNK_LINES * NTSCV_DMA_CHANNELS);
-    return n >= NTSCV_LINES_PER_FIELD ? (uint16_t)(n - NTSCV_LINES_PER_FIELD) : n;
+    n = (uint16_t)(n + NTSCV_LINES_PER_FRAME
+                      - NTSCV_CHUNK_LINES * NTSCV_DMA_CHANNELS);
+    return n >= NTSCV_LINES_PER_FRAME ? (uint16_t)(n - NTSCV_LINES_PER_FRAME) : n;
 }
 
 uint16_t ntscv_debug_events(void)
@@ -338,11 +346,39 @@ uint32_t ntscv_guard_b(void)
 
 /*---- 仕様の整合性をコンパイル時に確認 ----*/
 
-static_assert(NTSCV_SYS_CLOCK_KHZ * 22 == 315 * (NTSCV_PWM_WRAP + 1) * 1000,
-              "サンプルレート = 315/22 MHz = NTSCカラーサブキャリア (315/88 MHz) の4倍");
+#if NTSCV_SIG_PRESET == 0
+static_assert(NTSCV_SYS_CLOCK_HZ == NTSCV_SYS_PLL_VCO_HZ / 9u,
+              "S_D: システムクロック = VCO 1416MHz / postdiv 3×3 = 157.333333MHz");
+#endif
 static_assert((NTSCV_PWM_WRAP + 1) * NTSCV_SAMPLES_PER_LINE == 9988,
-              "1走査線 = 9988サイクル = 63.42us @157.5MHz (サブキャリア227周期)");
-static_assert(NTSCV_LINES_PER_FIELD % 2 == 0, "チャンクはライン境界で一致すること");
-static_assert(NTSCV_LINES_PER_FIELD % NTSCV_CHUNK_LINES == 0,
-              "チャンクはフィールド内で整数回転すること");
+              "1走査線 = 9988サイクル = 63.483us (PWM 11サイクル×908サンプル)");
+
+#if NTSCV_FIELDS_PER_FRAME == 2
+/* インターレース: フレームは奇数ライン (525) — 境界を跨ぐチャンク (524, 0) は
+   compose_chunk内のライン折返しで処理する (mod LINESの算術が全ラインを自動追跡) */
+static_assert(NTSCV_LINES_PER_FRAME % 2 == 1, "インターレースフレームは奇数ライン");
+#else
+/* プログレッシブ: フレームは偶数ライン (262) — チャンク列が割り切れる */
+static_assert(NTSCV_LINES_PER_FRAME % 2 == 0, "プログレッシブフレームは偶数ライン");
+#endif
+
+/* フィールド周期 = (LINES/FIELDS) × 9988サイクル。許容範囲はプリセット毎。 */
+#define NTSCV_FIELD_CYCLES ((uint32_t)NTSCV_LINES_PER_FRAME * NTSCV_SAMPLES_PER_LINE \
+                            * (NTSCV_PWM_WRAP + 1u) / NTSCV_FIELDS_PER_FRAME)
+#if NTSCV_SIG_PRESET == 0
+/* 60.000Hz±0.01Hz (うなり周期60秒超=実質静止) */
+static_assert(NTSCV_SYS_CLOCK_HZ * 1000ull / NTSCV_FIELD_CYCLES >= 59990ull &&
+              NTSCV_SYS_CLOCK_HZ * 1000ull / NTSCV_FIELD_CYCLES <= 60010ull,
+              "S_D: フィールドレートは60.000Hz±0.01Hz");
+#elif NTSCV_SIG_PRESET == 3
+/* S_C: 60.07Hz (元ドライバと同じ157.5MHz、現行構造) */
+static_assert(NTSCV_SYS_CLOCK_HZ * 1000ull / NTSCV_FIELD_CYCLES >= 60050ull &&
+              NTSCV_SYS_CLOCK_HZ * 1000ull / NTSCV_FIELD_CYCLES <= 60090ull,
+              "S_C: フィールドレートは約60.07Hz");
+#else
+/* S_A/S_B: 元ドライバと同一60.19Hz前後 */
+static_assert(NTSCV_SYS_CLOCK_HZ * 1000ull / NTSCV_FIELD_CYCLES >= 60170ull &&
+              NTSCV_SYS_CLOCK_HZ * 1000ull / NTSCV_FIELD_CYCLES <= 60200ull,
+              "S_A/S_B: フィールドレートは約60.19Hz");
+#endif
 static_assert(NTSCV_CHUNK_SAMPLES <= 0xffff, "DMA転送カウントは16bit範囲内であること");

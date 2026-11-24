@@ -67,6 +67,8 @@
 #include "oled_fonts.h"
 #include "neojam_oled.h"
 #include "ext_ej.h"
+// NEO.* / NEOSCROLL.* (Annex WiFi互換のWS2812ストリップ・マトリクス制御) — basic.h後・oled_fonts後
+#include "ext_neo.h"
 #include "usr.h"
 #include "init.h"
 

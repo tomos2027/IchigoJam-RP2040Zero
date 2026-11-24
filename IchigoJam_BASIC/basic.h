@@ -132,6 +132,10 @@ static int ws_data_mode = WS_MODE_RGB888;    // ピクセル格納モード (0-3
 static int ws_data_offset = 0;               // 読み込み開始位置 (mode0-2: 配列インデックス0-357 / mode3: バッファpx位置0-2729)
 static uint8_t ws_matrix_buf[WS_BUFFER_BYTES]; // mode3専用バッファ (GRB 3バイト/px)
 
+//WS.SETUPの設定 (WS.LEDのLED数上限・出力信号反転)。CLV実行時と起動時にリセットされる
+static int ws_setup_leds = 0;   // WS.LEDのnの上限 (0=上限なし・既定、WS.SETUPで設定)
+static int ws_setup_invert = 0; // WS2812出力信号の反転 (1=完全反転・アイドルもHi。WS.LED 0 (内蔵GP16) 以外に適用)
+
 //WS.MATRIX/WS.XY用のマトリクス設定 (論理座標→ピクセル番号の変換に使用)
 //flags: bit0=ジグザグ配線 (行ごとに折り返し)、bit1=左右反転(flipX)、bit2=上下反転(flipY)
 #define WS_MATRIX_FLAG_ZIGZAG 1
@@ -141,10 +145,12 @@ static int ws_matrix_w = 8;            // 横ピクセル数
 static int ws_matrix_h = 8;            // 縦ピクセル数
 static int ws_matrix_flags = WS_MATRIX_FLAG_ZIGZAG; // 既定は8x8ジグザグ
 
-//WS.MODE/バッファのリセット (CLV実行時と起動時にbasic_clearVarsから呼ばれる)
+//WS.MODE/WS.SETUP/バッファのリセット (CLV実行時と起動時にbasic_clearVarsから呼ばれる)
 static void ws_data_reset() {
     ws_data_mode = WS_MODE_RGB888;
     ws_data_offset = 0;
+    ws_setup_leds = 0;
+    ws_setup_invert = 0;
     ws_matrix_w = 8;
     ws_matrix_h = 8;
     ws_matrix_flags = WS_MATRIX_FLAG_ZIGZAG;
@@ -460,7 +466,38 @@ S_INLINE void command_ws_mode(); // WS.MODE mode{,offset} (WS2812ピクセル格
 S_INLINE void command_ws_put(); // WS.PUT idx,R,G,B (専用バッファへ1px書込み)
 S_INLINE void command_ws_matrix(); // WS.MATRIX w,h{,flags} (マトリクス寸法・配線設定)
 S_INLINE void command_ws_xy(); // WS.XY x,y,R,G,B (座標で1px書込み)
+S_INLINE void command_ws_setup(); // WS.SETUP n{,offset}{,invert} (WS.LEDのLED数上限・オフセット・信号反転)
 S_INLINE int func_rgb(); // RGB(r,g,b) 関数 (RGB332値を返す)
+// NEO.* / NEOSCROLL.* コマンド・関数 (ext_neo.hで定義、Annex WiFi互換のWS2812制御)
+S_INLINE void command_neo_setup(); // NEO.SETUP port{,nb_led}
+S_INLINE void command_neo_strip(); // NEO.STRIP s,e,R,G,B{,disable} / s,e,COLOR{,disable}
+S_INLINE void command_neo_pixel(); // NEO.PIXEL pos,R,G,B{,disable} / pos,COLOR{,disable}
+S_INLINE void command_neo_rotate(int right); // NEO.ROTATELEFT/ROTATERIGHT n{,s,e,disable}
+S_INLINE void command_neo_shift(int right); // NEO.SHIFTLEFT/SHIFTRIGHT n{,s,e,disable}
+S_INLINE void command_neo_refresh(); // NEO.REFRESH
+S_INLINE int func_neo_rgb(); // NEO.RGB(r,g,b) → RGB555
+S_INLINE int func_neo_getpixel(); // NEO.GETPIXEL(pos) → RGB555
+S_INLINE int func_neo_dim(); // NEO.DIM(COLOR,gain)
+S_INLINE int func_neo_lighten(); // NEO.LIGHTEN(COLOR,gain)
+S_INLINE int func_neo_darken(); // NEO.DARKEN(COLOR,gain)
+S_INLINE int func_neo_linearblend(); // NEO.LINEARBLEND(C1,C2,p)
+S_INLINE int func_neo_bilinearblend(); // NEO.BILINEARBLEND(UL,UR,LL,LR,x,y)
+S_INLINE void command_ns_setup(); // NEOSCROLL.SETUP devices,lines,port{,layout}{,w,h}{,flip}
+S_INLINE void command_ns_delete(); // NEOSCROLL.DELETE
+S_INLINE void command_ns_fill(); // NEOSCROLL.FILL COLOR{,x,y,w,h}
+S_INLINE void command_ns_textpos(); // NEOSCROLL.TEXT.POS x,y
+S_INLINE void command_ns_textfont(); // NEOSCROLL.TEXT.FONT n
+S_INLINE void command_ns_textbright(); // NEOSCROLL.TEXT.BRIGHTNESS b
+S_INLINE void command_ns_bright(); // NEOSCROLL.BRIGHTNESS b
+S_INLINE void command_ns_print(); // NEOSCROLL.PRINT "text"{,"colors"}
+S_INLINE void command_ns_show(); // NEOSCROLL.SHOW x,y
+S_INLINE void command_ns_limits(); // NEOSCROLL.LIMITS x1{,x2}{,y1}{,y2}
+S_INLINE void command_ns_sync(); // NEOSCROLL.SYNC
+S_INLINE void command_ns_mode(); // NEOSCROLL.MODE m
+S_INLINE void command_ns_scroll(int oscillate); // NEOSCROLL.SCROLL/OSCILLATE (コマンド形式)
+S_INLINE int func_ns_scroll(int oscillate); // NEOSCROLL.SCROLL/OSCILLATE (関数形式: 周期完了で1)
+S_INLINE int func_ns_x(); // NEOSCROLL.X() → 現在のスクロールX位置
+S_INLINE int func_ns_y(); // NEOSCROLL.Y() → 現在のスクロールY位置
 static int ir_port_to_gpio(int port); // BASICのINポート番号→GPIO番号 (io.hで定義)
 static int ir_nec_tx(int port, uint32_t frame, int repeat); // NEC赤外線送信エンジン (io.hで定義)
 
@@ -691,6 +728,29 @@ int basic_execute(char* commandline) {
 			case TOKEN_WS_PUT:	command_ws_put();							break; // WS.PUT idx,R,G,B (専用バッファへ1px書込み)
 			case TOKEN_WS_MATRIX:	command_ws_matrix();						break; // WS.MATRIX w,h{,flags} (マトリクス寸法・配線設定)
 			case TOKEN_WS_XY:	command_ws_xy();							break; // WS.XY x,y,R,G,B (座標で1px書込み)
+			case TOKEN_WS_SETUP: command_ws_setup();						break; // WS.SETUP n{,offset}{,invert} (WS2812送信設定)
+			case TOKEN_NEO_SETUP: command_neo_setup();						break; // NEO.SETUP port{,nb_led} (Annex互換WS2812)
+			case TOKEN_NEO_STRIP: command_neo_strip();						break; // NEO.STRIP s,e,R,G,B{,disable} / s,e,COLOR{,disable}
+			case TOKEN_NEO_PIXEL: command_neo_pixel();						break; // NEO.PIXEL pos,R,G,B{,disable} / pos,COLOR{,disable}
+			case TOKEN_NEO_ROTATELEFT: command_neo_rotate(0);				break; // NEO.ROTATELEFT n{,s,e,disable}
+			case TOKEN_NEO_ROTATERIGHT: command_neo_rotate(1);				break; // NEO.ROTATERIGHT n{,s,e,disable}
+			case TOKEN_NEO_SHIFTLEFT: command_neo_shift(0);					break; // NEO.SHIFTLEFT n{,s,e,disable}
+			case TOKEN_NEO_SHIFTRIGHT: command_neo_shift(1);				break; // NEO.SHIFTRIGHT n{,s,e,disable}
+			case TOKEN_NEO_REFRESH: command_neo_refresh();					break; // NEO.REFRESH (バッファ送信)
+			case TOKEN_NS_SETUP: command_ns_setup();						break; // NEOSCROLL.SETUP devices,lines,port{,layout}{,w,h}{,flip}
+			case TOKEN_NS_DELETE: command_ns_delete();						break; // NEOSCROLL.DELETE
+			case TOKEN_NS_FILL: command_ns_fill();							break; // NEOSCROLL.FILL COLOR{,x,y,w,h}
+			case TOKEN_NS_TEXTPOS: command_ns_textpos();					break; // NEOSCROLL.TEXT.POS x,y
+			case TOKEN_NS_TEXTFONT: command_ns_textfont();					break; // NEOSCROLL.TEXT.FONT n
+			case TOKEN_NS_TEXTBRIGHT: command_ns_textbright();				break; // NEOSCROLL.TEXT.BRIGHTNESS b
+			case TOKEN_NS_BRIGHT: command_ns_bright();						break; // NEOSCROLL.BRIGHTNESS b
+			case TOKEN_NS_PRINT: command_ns_print();						break; // NEOSCROLL.PRINT "text"{,"colors"}
+			case TOKEN_NS_SHOW: command_ns_show();							break; // NEOSCROLL.SHOW x,y
+			case TOKEN_NS_LIMITS: command_ns_limits();						break; // NEOSCROLL.LIMITS x1{,x2}{,y1}{,y2}
+			case TOKEN_NS_SYNC: command_ns_sync();							break; // NEOSCROLL.SYNC
+			case TOKEN_NS_MODE: command_ns_mode();							break; // NEOSCROLL.MODE m
+			case TOKEN_NSCROLL_SCROLL: command_ns_scroll(0);				break; // NEOSCROLL.SCROLL (コマンド兼関数)
+			case TOKEN_NSCROLL_OSCILLATE: command_ns_scroll(1);				break; // NEOSCROLL.OSCILLATE (コマンド兼関数)
 			default:
 				#ifdef USE_EXTENSION
 				if (extension_command(token.code)) {
@@ -1734,6 +1794,28 @@ static int16 token_expression5() {
 		case TOKEN_RGB: {
 			return func_rgb(); // RGB(r,g,b) → RGB332 (WS.MODE 1/2・COLOR用)
 		}
+		case TOKEN_NEO_RGB:
+			return func_neo_rgb(); // NEO.RGB(r,g,b) → RGB555 (NEO.*/NEOSCROLL.*用)
+		case TOKEN_NEO_GETPIXEL:
+			return func_neo_getpixel(); // NEO.GETPIXEL(pos)
+		case TOKEN_NEO_DIM:
+			return func_neo_dim(); // NEO.DIM(COLOR,gain)
+		case TOKEN_NEO_LIGHTEN:
+			return func_neo_lighten(); // NEO.LIGHTEN(COLOR,gain)
+		case TOKEN_NEO_DARKEN:
+			return func_neo_darken(); // NEO.DARKEN(COLOR,gain)
+		case TOKEN_NEO_LINEARBLEND:
+			return func_neo_linearblend(); // NEO.LINEARBLEND(C1,C2,p)
+		case TOKEN_NEO_BILINEARBLEND:
+			return func_neo_bilinearblend(); // NEO.BILINEARBLEND(UL,UR,LL,LR,x,y)
+		case TOKEN_NSCROLL_SCROLL:
+			return func_ns_scroll(0); // NEOSCROLL.SCROLL (周期完了で1)
+		case TOKEN_NSCROLL_OSCILLATE:
+			return func_ns_scroll(1); // NEOSCROLL.OSCILLATE (始点復帰で1)
+		case TOKEN_NSCROLL_X:
+			return func_ns_x(); // NEOSCROLL.X()
+		case TOKEN_NSCROLL_Y:
+			return func_ns_y(); // NEOSCROLL.Y()
 		default: {
 			command_error(ERR_SYNTAX_ERROR);
 			break;
@@ -3384,6 +3466,7 @@ S_INLINE void command_video() {
 			_g.screen_big = 0;
 			_g.screen_invert = 0;
 			ntsc_restart_mode(video == 9 ? VMODE_IJCOLOR : VMODE_WIDETEXT);
+			video_on();   // モードに応じた vram/SCREEN_W/SCREEN_H 設定 (VIDEO 10=42x27)
 			screen_clear();
 			return;
 		}
@@ -3979,6 +4062,53 @@ S_INLINE void command_ws_mode() {
 	}
 	ws_data_mode = mode;
 	ws_data_offset = offset;
+}
+
+// WS.SETUP n{,offset}{,invert} — WS.LEDの送信設定 (LED数上限・読み込みオフセット・信号反転)
+// n: WS.LEDのnの上限 (0-2730、0=上限なし・既定。WS.MODEのモード別上限とも共に適用)
+// offset: WS.MODEと同じ読み込み開始位置 (ws_data_offsetを設定。省略時は現状維持)
+// invert: 1=出力信号を完全反転 (アイドル・リセット期間もHi。WS.LED 0 (内蔵GP16) 以外に適用)、0=正転 (省略時は現状維持)
+// 設定はCLV実行時と起動時にws_data_reset()でデフォルトへ戻る
+S_INLINE void command_ws_setup() {
+	int n = token_expression();
+	IJB_ERR_CHK();
+	int offset = ws_data_offset;
+	int invert = ws_setup_invert;
+	int code = token_getCode();
+	if (code == TOKEN_COMMA) {
+		offset = token_expression();
+		IJB_ERR_CHK();
+		code = token_getCode();
+		if (code == TOKEN_COMMA) {
+			invert = token_expression();
+			IJB_ERR_CHK();
+		}
+	}
+	token_end();
+	IJB_ERR_CHK();
+	if (n < 0 || n > WS_BUFFER_PIXELS) {
+		command_error(ERR_ILLEGAL_ARGUMENT);
+		return;
+	}
+	if (ws_data_mode == WS_MODE_BUFFER) { // 専用バッファ: ピクセル位置 (WS.MODEと同じ条件)
+		if (offset < 0 || offset >= WS_BUFFER_PIXELS) {
+			command_error(ERR_ILLEGAL_ARGUMENT);
+			return;
+		}
+	} else { // 配列: インデックス
+		if (offset < 0 || offset >= IJB_SIZEOF_ARRAY_MAX) {
+			command_error(ERR_ILLEGAL_ARGUMENT);
+			return;
+		}
+	}
+	if (invert < 0 || invert > 1) {
+		command_error(ERR_ILLEGAL_ARGUMENT);
+		return;
+	}
+	//全検証後に一括適用 (エラー時に部分適用しない)
+	ws_setup_leds = n;
+	ws_data_offset = offset;
+	ws_setup_invert = invert;
 }
 
 // WS.PUT idx,R,G,B — 専用バッファ (mode3) のピクセルidxへ1px書込み (GRB順で格納)

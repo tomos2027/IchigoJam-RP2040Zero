@@ -29,7 +29,7 @@ IchigoJam移植部 (init.h/display.h/keyboard.h/storage.h) が旧ドライバ
 #define ATTROFFSETBW (WIDTH_XBW * WIDTH_Y)  /* モノクロ属性エリア位置 2160 */
 
 #define NUM_LINE_SAMPLES NTSCV_SAMPLES_PER_LINE
-#define NUM_LINES NTSCV_LINES_PER_FIELD
+#define NUM_LINES NTSCV_LINES_PER_FRAME
 #define V_SYNC NTSCV_FIELD_VSYNC_LINES
 #define V_PREEQ NTSCV_FIELD_BLANK1_LINES
 #define H_SYNC NTSCV_H_SYNC_SAMPLES
