@@ -407,7 +407,7 @@ S_INLINE int func_neo_bilinearblend() {
     return neo_pack555(neo_lerp8(rt, rb, n[5]), neo_lerp8(gt, gb, n[5]), neo_lerp8(bt, bb, n[5]));
 }
 
-//===== NEOSCROLL (WS2812B 8x8ドットマトリクス・キャンバス) =====
+//===== NEOSCROLL (WS2812Bドットマトリクス・キャンバス。モジュール寸法はSETUPで指定可) =====
 //キャンバスに描画した内容をNEOSCROLL.SHOW / SCROLL / OSCILLATEでLEDへ転送する
 //(SPRITESHEET/SPRITEはBMPファイルI/Oがないため非対応、フォントは内蔵5種のみ)
 
@@ -415,7 +415,8 @@ S_INLINE int func_neo_bilinearblend() {
 static uint16_t ns_canvas[NS_CANVAS_MAX];
 static int ns_used = 0;        // NEOSCROLL.SETUP済みか (DELETEで0)
 static int ns_port = 7;        // 出力ポート (WS.LEDと同じ0-11)
-static int ns_dw = 8, ns_dh = 8; // 表示寸法 (devices*8 × lines*8)
+static int ns_dw = 8, ns_dh = 8; // 表示寸法 (devices*mw × lines*mh)
+static int ns_mw = 8, ns_mh = 8; // モジュール寸法 (NEOSCROLL.SETUPのmw,mh、既定8x8)
 static int ns_cw = 8, ns_ch = 8; // キャンバス寸法 (省略時=表示寸法)
 static int ns_layout = 0;      // 配線レイアウト 0-5
 static int ns_flip = 0;        // 1=表示を上下反転
@@ -431,7 +432,7 @@ static int ns_lastcolor = 0;   // PRINTで色指定が短い/省略時に引き�
 
 //論理座標(x,y) → ストリップ物理位置 (layout 0-5、Annexの画像が参照できないため一般的な6構成の割当)
 //0=行優先 (上→下、各行は左→右) / 1=行優先ジグザグ / 2=列優先 / 3=列優先ジグザグ
-//4=モジュール単位・行方向 (各8x8は正、モジュール行内は左→右) / 5=モジュール単位・行方向ジグザグ
+//4=モジュール単位・行方向 (各モジュールns_mw×ns_mhは正、モジュール行内は左→右) / 5=モジュール単位・行方向ジグザグ
 static int ns_map(int x, int y) {
     int w = ns_dw, h = ns_dh;
     if (ns_flip) {
@@ -447,13 +448,17 @@ static int ns_map(int x, int y) {
         case 3: // 列ジグザグ (奇数列は行反転)
             if (x & 1) y = h - 1 - y;
             return x * h + y;
-        case 4: // モジュール単位・行方向
-            return (y / 8) * (w * 8) + (x / 8) * 64 + (y % 8) * 8 + (x % 8);
-        case 5: { // モジュール単位・行方向ジグザグ (モジュール行でモジュール列反転)
-            int mw = w / 8;
-            int mrow = y / 8, mcol = x / 8;
-            if (mrow & 1) mcol = mw - 1 - mcol;
-            return (mrow * mw + mcol) * 64 + (y % 8) * 8 + (x % 8);
+        case 4: { // モジュール単位・行方向 (任意寸法モジュール)
+            int mp = ns_mw * ns_mh;  // 1モジュールの画素数
+            int mpr = w / ns_mw;     // モジュール行あたりのモジュール数
+            return (y / ns_mh) * (mpr * mp) + (x / ns_mw) * mp + (y % ns_mh) * ns_mw + (x % ns_mw);
+        }
+        case 5: { // モジュール単位・行方向ジグザグ (モジュール行でモジュール列反転、任意寸法)
+            int mp = ns_mw * ns_mh;
+            int mpr = w / ns_mw;
+            int mrow = y / ns_mh, mcol = x / ns_mw;
+            if (mrow & 1) mcol = mpr - 1 - mcol;
+            return (mrow * mpr + mcol) * mp + (y % ns_mh) * ns_mw + (x % ns_mw);
         }
         default: // 0: 行優先
             return y * w + x;
@@ -561,8 +566,9 @@ static void ns_draw_text(const char* text, const char* colors) {
     }
 }
 
-//NEOSCROLL.SETUP devices,lines,port{,layout}{,width,height}{,flip}
-//表示寸法 = devices*8 × lines*8 (合計2730px以内)。canvas省略時=表示寸法
+//NEOSCROLL.SETUP devices,lines,port{,layout}{,width,height}{,flip}{,module_w,module_h}
+//表示寸法 = devices*module_w × lines*module_h (合計2730px以内)。module_w/h省略時=8x8。
+//canvas省略時=表示寸法
 S_INLINE void command_ns_setup() {
     int dev = token_expression();
     IJB_ERR_CHK();
@@ -578,7 +584,7 @@ S_INLINE void command_ns_setup() {
     }
     int port = token_expression();
     IJB_ERR_CHK();
-    int layout = 0, w = -1, h = -1, flip = 0;
+    int layout = 0, w = -1, h = -1, flip = 0, mw = 8, mh = 8;
     int code = token_getCode();
     if (code == TOKEN_COMMA) {
         layout = token_expression();
@@ -595,6 +601,20 @@ S_INLINE void command_ns_setup() {
                 if (code == TOKEN_COMMA) {
                     flip = token_expression();
                     IJB_ERR_CHK();
+                    code = token_getCode();
+                    if (code == TOKEN_COMMA) {
+                        mw = token_expression();
+                        IJB_ERR_CHK();
+                        code = token_getCode();
+                        if (code == TOKEN_COMMA) {
+                            mh = token_expression();
+                            IJB_ERR_CHK();
+                        } else {
+                            token_back();
+                        }
+                    } else {
+                        token_back();
+                    }
                 } else {
                     token_back();
                 }
@@ -609,10 +629,14 @@ S_INLINE void command_ns_setup() {
     }
     token_end();
     IJB_ERR_CHK();
-    int dw = dev * 8, dh = lines * 8;
     if (dev < 1 || dev > 255 || lines < 1 || lines > 255 || port < 0 || port > 11
         || layout < 0 || layout > 5 || flip < 0 || flip > 1
-        || (long)dw * dh > WS_BUFFER_PIXELS) {
+        || mw < 1 || mw > 64 || mh < 1 || mh > 64) {
+        command_error(ERR_ILLEGAL_ARGUMENT);
+        return;
+    }
+    int dw = dev * mw, dh = lines * mh;
+    if ((long)dw * dh > WS_BUFFER_PIXELS) {
         command_error(ERR_ILLEGAL_ARGUMENT);
         return;
     }
@@ -629,6 +653,8 @@ S_INLINE void command_ns_setup() {
     ns_flip = flip;
     ns_dw = dw;
     ns_dh = dh;
+    ns_mw = mw;
+    ns_mh = mh;
     ns_cw = w;
     ns_ch = h;
     memset(ns_canvas, 0, sizeof ns_canvas);
@@ -657,6 +683,7 @@ S_INLINE void command_ns_delete() {
     memset(ns_canvas, 0, sizeof ns_canvas);
     ns_port = 7;
     ns_dw = ns_dh = ns_cw = ns_ch = 8;
+    ns_mw = ns_mh = 8;
     ns_layout = ns_flip = 0;
     ns_bright = 128;
     ns_tbright = 255;

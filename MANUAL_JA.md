@@ -691,6 +691,8 @@ CLV                ' 全設定をデフォルト (上限0=なし・オフセッ�
 
 ### 7.11 NEO.* / NEOSCROLL.* — Annex WiFi互換のWS2812制御
 
+> **詳細なリファレンスは [docs/NEO_JA.md](docs/NEO_JA.md) を参照してください** (全コマンドの引数・範囲・エラー・サンプル集)。
+
 [Annex WiFi Basic](https://github.com/cicciocb/annex-wifi-basic) 風の NeoPixel (WS2812B) ストリップ・マトリクス制御コマンド群です。既存の `WS.LED`/`WS.PUT` と同じ8KB専用バッファ (mode3、最大2730px) と送信経路を共用するため、**`WS.SETUP` の信号反転や SDON 中の共有ピン保護もそのまま有効**です。色は **16bit RGB555パック色** (式が16bitのため Annex の24bit色相当は不可。下位5bit/成分で 0-32767)、明るさ・ブレンドの gain/progress は **1/256固定小数** (256=1.0倍) です。
 
 **NEO.*(ストリップ操作)**
@@ -726,13 +728,13 @@ FOR Z=0 TO 5
 NEXT
 ```
 
-**NEOSCROLL.*(8x8モジュール・ドットマトリクス)**
+**NEOSCROLL.*(ドットマトリクス)**
 
-8x8モジュールをチェーン接続したマトリクス (AnnexのNeoPixel Dot Matrix互換) にテキストを表示・スクロールできます。キャンバス (最大8192px) に描画し、`SHOW` で転送します。
+8x8モジュールをチェーン接続したマトリクス (AnnexのNeoPixel Dot Matrix互換。`mw,mh` で5x5・4x4など縦横自由なモジュール寸法も指定可) にテキストを表示・スクロールできます。キャンバス (最大8192px) に描画し、`SHOW` で転送します。
 
 | コマンド/関数 | 説明 |
 |---|---|
-| `NEOSCROLL.SETUP dev,lines,port{,layout}{,w,h}{,flip}` | dev×8 × lines×8 pxの表示を設定 (合計2730px以内)。`layout` 0-5 (下表)、`w,h` はキャンバス寸法 (省略時=表示寸法)、`flip` 1=上下反転 |
+| `NEOSCROLL.SETUP dev,lines,port{,layout}{,w,h}{,flip}{,mw,mh}` | dev×mw × lines×mh pxの表示を設定 (合計2730px以内)。`layout` 0-5 (下表)、`w,h` はキャンバス寸法 (省略時=表示寸法)、`flip` 1=上下反転、`mw,mh` はモジュール寸法 (1-64px・縦横独立、省略時8x8) |
 | `NEOSCROLL.FILL COLOR{,x,y,w,h}` | キャンバス領域を塗潰し (省略時は全面) |
 | `NEOSCROLL.TEXT.POS x,y` | 描画カーソル (**左上原点・y下向き**。Annexは左下原点なので注意) |
 | `NEOSCROLL.TEXT.FONT n` | 内蔵フォント 1-5 (1=5x7プロポーショナル、既定1) |
