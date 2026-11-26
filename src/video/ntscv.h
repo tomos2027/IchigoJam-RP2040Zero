@@ -286,9 +286,9 @@ uint16_t ntscv_debug_scanline(void);
    (フラッシュ書込等でのみ増え、その後 ntscv_init で再位相する) */
 uint16_t ntscv_debug_events(void);
 
-/* 診断用: フィールド周期の異常 (理論値16664µsから±1ms超過) の累積回数。
-   一時診断 (画面揺れ切り分け用)。正常運用では増えない */
-uint16_t ntscv_debug_field_anomalies(void);
+/* 診断用: DMA IRQハンドラの呼出累計 (SAVE等のフラッシュ書込み中に割込みが
+   継続しているかの確認用。約508µs毎に1増える) */
+uint32_t ntscv_debug_irq_count(void);
 
 /* フィールド境界 (フレームマークラインの合成時、DMA割込み内) に1回呼ぶコールバックを
    登録する。直後がVSYNC+ブランキングの非表示窓のため、TVRAMコピー等の表示更新を

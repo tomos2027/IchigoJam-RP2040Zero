@@ -25,7 +25,21 @@ STATIC void exec(char* s) {
     key_flg.insert = key_flg.bkinsert;
 }
 
+//RAM移設ベクタテーブル (16システム例外+32外部IRQ=48エントリ、VTORは128Bアライン要求のため256B)
+//SAVE/KBD等のフラッシュ書込み中はXIPが停止し、フラッシュ上のベクタフェッチが
+//ストール/破壊されて映像DMA割込みが止まり画面が消えるため、IRQエントリをXIP非依存にする
+static uint32_t ram_vtable[64] __attribute__((aligned(256)));
+
 int main() {
+    //最初のirq_set_exclusive_handlerより前に実行する (SDKは現在のVTOR先へハンドラを書込むため)
+    uint32_t *vsrc = (uint32_t *)scb_hw->vtor;
+    for (int i = 0; i < 64; i++) {
+        ram_vtable[i] = vsrc[i];
+    }
+    scb_hw->vtor = (uint32_t)ram_vtable;
+    // HardFault (例外3) をRAM常駐フックへ: フラッシュ操作中のフォaultをシリアル通知できる
+    ((volatile uint32_t *)ram_vtable)[3] = (uint32_t)ram_hardfault_entry | 1u;
+
     pico_init();
     video_output_init();
     ichigojam_init();

@@ -571,18 +571,6 @@ void ntscv_compose_safety_chunk(uint16_t *dst)
     }
 }
 
-/* 一時診断: フィールド周期の異常検出 (画面揺れ/ロールの原因切り分け用)。
-   フレームマークラインの合成時刻を計測し、フィールド周期が理論値
-   (262.5ライン×63.483µs≒16664µs) から ±1ms 以上外れた回数を数える。
-   合成が定時 (merge_events不変) でも信号にライン欠け等があればここに現れる */
-static volatile uint32_t field_mark_last_us = 0;
-static volatile uint16_t field_anomalies = 0;
-
-uint16_t ntscv_debug_field_anomalies(void)
-{
-    return field_anomalies;
-}
-
 /* フィールド境界フック: フレームマークライン (252/514) の合成時に1回呼ばれる
    (DMA割込み内)。マークライン直後はVSYNC+ブランキングの非表示窓
    (約46ライン≒2.9ms) が続くため、TVRAMコピー等の表示更新をこの窓で行うと
@@ -625,7 +613,11 @@ static void __not_in_flash_func(render_line_active)(uint16_t *lp, int l)
     }
 }
 
-void __not_in_flash_func(ntscv_compose_chunk)(uint16_t *dst, uint16_t first_line)
+/* noinline+no-jump-tables必須: 本関数はSAVE等のフラッシュ書込み中 (XIP停止) に
+   DMA IRQから実行される。switch/ifチェーンをGCCがジャンプテーブル (FLASH上の
+   rodata) に変換すると、XIP停止中のテーブル読出しがゴミ値を返して mov pc が
+   未知アドレスへ飛びHardFaultするため、テーブル生成を禁止する */
+void __attribute__((noinline, optimize("O2", "no-jump-tables"))) __not_in_flash_func(ntscv_compose_chunk)(uint16_t *dst, uint16_t first_line)
 {
     /* 停止中は書き込まない (ntscv_stopはエンジン自体を解放するため通常は不到達の安全策) */
     if (!ntscv_running) return;
@@ -647,15 +639,6 @@ void __not_in_flash_func(ntscv_compose_chunk)(uint16_t *dst, uint16_t first_line
                フレームは奇数ラインのためチャンク先頭の偶奇がフレームごとに反転し、
                マーク検出は行単位で行う (先頭一致だと半分のフィールドで発火しない) */
             ntscv_frame_seq++;
-            uint32_t now = (uint32_t)time_us_64();
-            uint32_t last = field_mark_last_us;
-            field_mark_last_us = now;
-            if (last != 0) {
-                uint32_t delta = now - last; // 32bit巻き戻し (71.6分毎) でも差分は正しい
-                if (delta < 15664u || delta > 17664u) {
-                    field_anomalies++;
-                }
-            }
             if (field_hook_cb) field_hook_cb();
         }
 
@@ -709,47 +692,39 @@ void __not_in_flash_func(ntscv_compose_chunk)(uint16_t *dst, uint16_t first_line
             uint16_t half = NTSCV_SAMPLES_PER_LINE / 2;
             uint16_t eq = NTSCV_EQ_PULSE_SAMPLES;
             uint16_t serr = half - NTSCV_H_SYNC_SAMPLES;
-            switch (line) {
-            case 262: /* 前半ブランキング + 均等化パルス (262.5) */
+            /* if/elseチェーンで記述する (switchのジャンプテーブルはFLASH上の
+               rodataに置かれ、フラッシュ書込み中のXIP停止でテーブル読出しが
+               ゴミ値を返して mov pc が未知アドレスへ飛ぶため) */
+            if (line == 262) { /* 前半ブランキング + 均等化パルス (262.5) */
                 fill_samples(lp, half, NTSCV_LEVEL_BLACK);
                 fill_samples(lp + half, eq, NTSCV_LEVEL_SYNC);
                 fill_samples(lp + half + eq,
                              NTSCV_SAMPLES_PER_LINE - half - eq,
                              NTSCV_LEVEL_BLACK);
-                break;
-            case 263:
-            case 264:
-            case 269:
-            case 270: /* 均等化パルス (263.0-264.5 / 269.0-270.5) */
+            } else if (line == 263 || line == 264 || line == 269 || line == 270) {
+                /* 均等化パルス (263.0-264.5 / 269.0-270.5) */
                 emit_eq_line(lp);
-                break;
-            case 265: /* 均等化パルス (265.0) + セレーション後半 (265.5-266.5) */
+            } else if (line == 265) { /* 均等化パルス (265.0) + セレーション後半 (265.5-266.5) */
                 fill_samples(lp, eq, NTSCV_LEVEL_SYNC);
                 fill_samples(lp + eq, half - eq, NTSCV_LEVEL_BLACK);
                 fill_samples(lp + half, serr, NTSCV_LEVEL_SYNC);
                 fill_samples(lp + half + serr,
                              NTSCV_SAMPLES_PER_LINE - half - serr, NTSCV_LEVEL_BLACK);
-                break;
-            case 266:
-            case 267: /* セレーション (266.0-268.0) */
+            } else if (line == 266 || line == 267) { /* セレーション (266.0-268.0) */
                 emit_serr_line(lp);
-                break;
-            case 268: /* セレーション前半 (268.0-268.5) + 均等化パルス (268.5) */
+            } else if (line == 268) { /* セレーション前半 (268.0-268.5) + 均等化パルス (268.5) */
                 fill_samples(lp, serr, NTSCV_LEVEL_SYNC);
                 fill_samples(lp + serr, NTSCV_H_SYNC_SAMPLES, NTSCV_LEVEL_BLACK);
                 fill_samples(lp + half, eq, NTSCV_LEVEL_SYNC);
                 fill_samples(lp + half + eq,
                              NTSCV_SAMPLES_PER_LINE - half - eq,
                              NTSCV_LEVEL_BLACK);
-                break;
-            case 271: /* 均等化パルス (271.0) + 後半ブランキング */
+            } else if (line == 271) { /* 均等化パルス (271.0) + 後半ブランキング */
                 fill_samples(lp, eq, NTSCV_LEVEL_SYNC);
                 fill_samples(lp + eq,
                              NTSCV_SAMPLES_PER_LINE - eq, NTSCV_LEVEL_BLACK);
-                break;
-            default: /* 272: ブランキングヘッド (バースト無し) + 黒 */
+            } else { /* 272: ブランキングヘッド (バースト無し) + 黒 */
                 emit_blank_line(lp, false);
-                break;
             }
             continue;
         }

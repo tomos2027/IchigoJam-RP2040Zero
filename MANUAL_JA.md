@@ -702,8 +702,10 @@ CLV                ' 全設定をデフォルト (上限0=なし・オフセッ�
 | `NEO.SETUP port{,nb_led}` | ポート (WS.LEDと同じ0-11) とLED数 (1-2730) を設定。`nb_led` 省略時は現状維持 (初期8) |
 | `NEO.PIXEL pos,R,G,B{,disable}` | pos (0-nb_led-1) に色設定 |
 | `NEO.PIXEL pos,COLOR{,disable}` | パック色指定形 (引数の個数で自動判別) |
+| `NEO.PIXEL pos,"記号"{,disable}` | 色記号文字列形 (下記色記号表。先頭1文字を適用) |
 | `NEO.STRIP s,e,R,G,B{,disable}` | s〜e (両端含む) を一括設定 |
 | `NEO.STRIP s,e,COLOR{,disable}` | パック色指定形 |
+| `NEO.STRIP s,e,"記号"{,disable}` | 色記号文字列形 |
 | `NEO.REFRESH` | バッファ全体を送信 |
 | `NEO.ROTATELEFT n{,s,e,disable}` | 範囲[s,e] (省略時全体) を回転。端は反対側へ周回 |
 | `NEO.ROTATERIGHT n{,s,e,disable}` | 同じく右回転 |
@@ -739,7 +741,7 @@ NEXT
 | `NEOSCROLL.TEXT.POS x,y` | 描画カーソル (**左上原点・y下向き**。Annexは左下原点なので注意) |
 | `NEOSCROLL.TEXT.FONT n` | 内蔵フォント 1-5 (1=5x7プロポーショナル、既定1) |
 | `NEOSCROLL.TEXT.BRIGHTNESS b` | テキスト明るさ 0-255 (既定255) |
-| `NEOSCROLL.BRIGHTNESS b` | 全体明るさ 0-255 (既定128、SHOW時に適用) |
+| `NEOSCROLL.BRIGHTNESS b` | 全体明るさ 0-255 (既定255=等倍、SHOW時に適用) |
 | `NEOSCROLL.PRINT "text"{,"colors"}` | カーソル位置へテキスト描画。`colors` は1文字1色の色記号 (Annex互換、下表) |
 | `NEOSCROLL.SHOW x,y` | キャンバスの(x,y)を左上とする表示範囲をLEDへ転送 |
 | `NEOSCROLL.LIMITS x1{,x2}{,y1}{,y2}` | スクロール範囲 (窓オフセットの範囲。省略時は現状維持、SETUP時はキャンバス全域) |
@@ -752,7 +754,9 @@ NEXT
 
 ※SPRITESHEET/SPRITE (BMP読込み) は非対応、フォントは内蔵5種のみです。`NEOSCROLL.SCROLL`/`OSCILLATE` は待ち時間と共にBASICループから繰返し呼出してください (例: `WAIT 3` を挟んで1px/約30ms)。
 
-色記号 (Annex互換): `B`=青 `b`=紺 `C`=シアン `c`=濃シアン `G`=緑 `g`=濃緑 `K`=黒 `k`=濃灰 `M`=マゼンタ `m`=マルーン `R`=赤 `r`=暗赤 `Y`=黄 `y`=黄緑 `O`=オレンジ `o`=オリーブ `P`=紫 `p`=ピンク `W`=白 `w`=明灰 `S`=シルバー。文字列より短い/省略した部分は前回の色を引き継ぎます。
+色記号 (Annex互換): `B`=青 `b`=紺 `C`=シアン `c`=濃シアン `G`=緑 `g`=濃緑 `K`=黒 `k`=濃灰 `M`=マゼンタ `m`=マルーン (暗赤に近い色) `R`=赤 `r`=暗赤 `Y`=黄 `y`=黄緑 `O`=オレンジ `o`=オリーブ `P`=紫 `p`=ピンク `W`=白 `w`=明灰 `S`=シルバー。文字列より短い/省略した部分は前回の色を引き継ぎます。実際の出力値 (RGB555換算後) は [docs/NEO_JA.md](docs/NEO_JA.md) の色表を参照。
+
+※ 色記号は **`NEOSCROLL.PRINT` の色文字列** と **`NEO.PIXEL pos,"記号"` / `NEO.STRIP s,e,"記号"` の文字列引数** で使用できます。**裸の英字 (`B` 等) は色記号ではなく BASIC変数** です (`NEO.PIXEL 1,B` は変数B=通常0の指定になります)。
 
 `layout` 0-5 (Annexの画像割当が確認できないため一般的な6構成の割当です): 0=行優先、1=行優先ジグザグ、2=列優先、3=列優先ジグザグ、4=モジュール単位・行方向、5=モジュール単位・行方向ジグザグ
 

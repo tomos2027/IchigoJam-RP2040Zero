@@ -68,7 +68,7 @@ IchigoJam移植部 (init.h/display.h/keyboard.h/storage.h) が旧ドライバ
 
 /* 旧TVRAM互換レイアウト: [0..W*H)=文字コード、[W*H..2*W*H)=属性。
    モードごとに属性エリア位置が変わる (IJ 768 / カラー 1134 / 80桁 2160)。 */
-static uint8_t TVRAM[WIDTH_XMAX * WIDTH_Y * 2 + 1];
+static uint8_t TVRAM[WIDTH_XMAX * WIDTH_Y * 2 + 1] __attribute__((aligned(4)));
 static uint8_t *GVRAM = 0;   /* グラフィックVRAM (set_videomodeで登録) */
 static uint8_t *Fontp = 0;   /* 現在のフォント先頭 (呼び出し側が設定) */
 

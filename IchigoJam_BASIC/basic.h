@@ -272,6 +272,7 @@ char* pc;		// program counter
 //char* pcnext;   // next line // alignナシ版
 char* pcbreak;	// break point
 char* lasttoken; // 取得したトークンの先頭 for token_back
+static uint8 stop_request; // STOPコマンドによる中断要求 (次の文の実行前にBreak)
 
 #define TOKEN_CACHE // 212byte使う、40%高速化する
 
@@ -394,6 +395,7 @@ S_INLINE void command_goto();
 S_INLINE void command_gosub();
 S_INLINE void command_return();
 S_INLINE void command_cont();
+S_INLINE void command_stop();
 static void command_print(); // 元はS_INLINEではなかった
 S_INLINE void command_input();
 S_INLINE void command_new();
@@ -634,6 +636,7 @@ int basic_execute(char* commandline) {
 			case TOKEN_REM_1:
 			case TOKEN_REM_2:		command_rem();							break;
 			case TOKEN_CONT:		command_cont();							break;
+			case TOKEN_STOP:		command_stop();							break;
 			//52
 			//53
 //			case TOKEN_OK:			command_ok();							return 2; // 1.2b62まで
@@ -763,7 +766,8 @@ int basic_execute(char* commandline) {
 //		xprintf("_g.err %d\n", _g.err);
 		if (_g.err)
 			return BASIC_RESULT_STOP_OR_ERR;
-		if (stopExecute()) {
+		if (stopExecute() || (stop_request && pc >= list && pc < list + SIZE_RAM_LIST)) {
+			stop_request = 0;
 			command_error(ERR_BREAK);
 //			IJB_out(outbuf = 0);
 //			IJB_led(0);
@@ -2103,6 +2107,13 @@ S_INLINE void command_return() {
 	pc = gosubstack[--_g.ngosubstack];
 #endif
 }
+//STOP — 実行中のプログラムを中断する (次の文の実行前にBreak表示、CONTで再開)
+S_INLINE void command_stop() {
+	token_end();
+	IJB_ERR_CHK();
+	stop_request = 1;
+}
+
 S_INLINE void command_cont() {
 	token_end();
 	if (pc < list || pc >= list + 1026) {
@@ -2751,6 +2762,7 @@ S_INLINE void command_run() {
 
 	_g.ngosubstack = 0;
 	_g.nforstack = 0;
+	stop_request = 0;
 //	IJB_clt();
 	key_clearKey(); // 1.4b09 ?
 	if (_g.listsize) {

@@ -17,7 +17,38 @@ void led_builtin(bool on);//実体はext_ws.h、include順の関係で前方宣�
 // core1パーク/レジューム/フラッシュ委譲 (実体はsound.h、include順の関係で前方宣言)
 void psg_core1_park(void);
 void psg_core1_resume(void);
-static void __not_in_flash_func(psg_core1_flash_op_and_wait)(uint32_t offset, const uint8_t *data);
+static int __not_in_flash_func(psg_core1_flash_op_and_wait)(uint32_t offset, const uint8_t *data);
+
+// ===== RAM常駐診断チャネル =====
+//フラッシュ操作中 (XIP停止) でも安全にUART送信するため、バッファ・コードともRAM配置。
+//diag_logは文字列リテラルがフラッシュ上にあるため操作中は呼べない。
+//メッセージは全て即値で組み立て、16進のみ (除算命令はライブラリ呼出=XIPフェッチになるため使わない)
+static char ram_diag_buf[96];
+static void __attribute__((noinline)) __not_in_flash_func(ram_diag_send)(void) {
+    for (const char *p = ram_diag_buf; *p; p++) {
+        uart_putc_raw(uart0, *p);
+    }
+    uart_putc_raw(uart0, '\r');
+    uart_putc_raw(uart0, '\n');
+}
+static void __attribute__((noinline)) __not_in_flash_func(ram_diag_clear)(void) {
+    ram_diag_buf[0] = 0;
+}
+static void __attribute__((noinline)) __not_in_flash_func(ram_diag_addc)(char c) {
+    char *p = ram_diag_buf;
+    while (*p) p++;
+    *p++ = c;
+    *p = 0;
+}
+static void __attribute__((noinline)) __not_in_flash_func(ram_diag_addhex)(uint32_t v) {
+    ram_diag_addc('0');
+    ram_diag_addc('x');
+    for (int b = 28; b >= 0; b -= 4) {
+        uint8_t nib = (uint8_t)((v >> b) & 0xFu);
+        ram_diag_addc((char)(nib < 10 ? '0' + nib : 'A' + nib - 10));
+    }
+}
+// HardFault常駐フック (実体はsound.h: psg_core1_trace参照のため。main()でRAMベクタ表へ登録)
 // 診断: シリアルログ (uart0=GP0, 115200, ポーリング送信+CRLF)。
 // 割込み禁止中も動作する (UARTはハードウェアで自律送出されるため)。
 // フラッシュ書込中 (XIP停止) は呼べないが、呼び出し箇所はすべてXIP生存領域
@@ -80,8 +111,11 @@ static int IJB_save(int n, uint8* list, int size) {
         // ROMの program 関数はデータバッファが 4 byte アラインメントされていることを要求するため、
         // スタック上の list をアラインバッファへコピーして渡す。
         memcpy(flash_sector_buffer, list, FLASH_SECTOR_SIZE);
-        psg_core1_flash_op_and_wait(offset, flash_sector_buffer); // RAM配置: フラッシュビジー中もXIP不要
-        res = 0;
+        if (psg_core1_flash_op_and_wait(offset, flash_sector_buffer)) { // RAM配置: フラッシュビジー中もXIP不要
+            res = 1; // タイムアウト/アボート (詳細はシリアルログ [S10!]/[S11] 参照)
+        } else {
+            res = 0;
+        }
     } else if (EEPROM_OFFSET <= n && n < EEPROM_OFFSET + EEPROM_SIZE) {
         res = write_eeprom((n - EEPROM_OFFSET) * SIZELIMIT, list, SIZELIMIT);
     } else {

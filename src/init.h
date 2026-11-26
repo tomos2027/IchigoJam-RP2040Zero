@@ -37,7 +37,7 @@ static void __not_in_flash_func(ntsc_line_callback)(void) {
 //構築中フラグ: フックのmemcpyがタイマーの描画途中に割り込むとシャドウの中途状態が
 //コピーされティアになるため (60Hz対60.19Hzのうなりで約5.4秒周期で発生)、
 //構築完了 (shadow_ready) のときだけコピーし、構築中は1フィールドスキップする
-static uint8_t tvram_shadow[WIDTH_XMAX * WIDTH_Y * 2 + 1];
+static uint8_t tvram_shadow[WIDTH_XMAX * WIDTH_Y * 2 + 1] __attribute__((aligned(4)));
 static volatile uint8_t tvram_shadow_building = 0;
 static volatile uint8_t tvram_shadow_ready = 0;
 
@@ -113,11 +113,25 @@ void vram_to_tvram_all(bool visible_cursor) {
 //60Hzタイマーからコピーするとフィールド60.19Hzとのうなり (51µs/フレーム) で
 //ティア線が約5.4秒周期で画面を一周し、画面ジャンプ/ロールに見えていたため、
 //マークライン直後のVSYNC+ブランキング窓 (非表示) でシャドウをTVRAMへ一括反映する。
-//IRQ内の処理はmemcpy 1回のみ (vram_to_tvram_all本体は60Hzタイマーがシャドウへ描画)。
+//IRQ内の処理はワードコピーのみ (vram_to_tvram_all本体は60Hzタイマーがシャドウへ描画)。
 //タイマーが構築中のときはこのフィールドはスキップし、次の境界で反映する
-static void field_display_update(void) {
+//SAVE/KBD等のフラッシュ書込み (core1委譲) 中はXIPが不能になるため、
+//DMA割込みから到達可能なこの関数はRAM配置必須。memcpy自体がフラッシュ配置の
+//ため呼べず、ループでコピーする (sound.h:60のnoinline教訓に従いRAM配置を保証)
+static void __attribute__((noinline)) __not_in_flash_func(field_display_update)(void) {
     if (tvram_shadow_ready) {
-        memcpy(TVRAM, tvram_shadow, sizeof(TVRAM));
+        //TVRAM/tvram_shadowはaligned(4)。サイズ=WIDTH_XMAX*WIDTH_Y*2+1 (4321B)
+        //のためワードコピー+末尾バイト
+        uint32_t *d = (uint32_t *)TVRAM;
+        const uint32_t *s = (const uint32_t *)tvram_shadow;
+        for (uint32_t n = sizeof(TVRAM) / 4; n; n--) {
+            *d++ = *s++;
+        }
+        uint8_t *db = (uint8_t *)d;
+        const uint8_t *sb = (const uint8_t *)s;
+        for (uint32_t n = sizeof(TVRAM) & 3; n; n--) {
+            *db++ = *sb++;
+        }
         tvram_shadow_ready = 0;
     }
 }

@@ -40,6 +40,9 @@ static bool __not_in_flash_func(psg_emu_timer_callback)(repeating_timer_t* rt);
 volatile uint32_t flash_core1_offset = 0;
 volatile const uint8_t *flash_core1_data = NULL;
 volatile uint8_t flash_core1_done = 0;
+// 診断: wait_readyの最終ステータス値と異常アボート指示 (core0⇔core1共有)
+volatile uint8_t flash_core1_status_last = 0xFF;
+volatile uint8_t flash_core1_abort = 0;
 
 static volatile uint psg_core1_alarm_irq = 0;
 static volatile bool psg_core1_parked = false;
@@ -51,6 +54,47 @@ static volatile uint psg_core1_trace = 0;
 static volatile uint32_t psg_core1_spin_st = 0;
 static volatile uint32_t psg_core1_spin_cnt = 0;
 static volatile uint32_t psg_core1_got = 0;
+
+// ===== HardFault常駐フック (RAMベクタ表へ登録、両コア共通) =====
+//フラッシュ操作中 (XIP停止) のフォault (残存XIPフェッチによるゴミ実行/不正アクセス) を
+//シリアルへ通知する。例外フレームのPC/LRとcore1トレースを報告して停止する。
+//メッセージは即値構築・16進のみ (除算/フラッシュリテラル不使用でXIP停止中も安全)
+static void __attribute__((naked)) __not_in_flash_func(ram_hardfault_entry)(void) {
+    __asm volatile (
+        "mov r0, sp\n"
+        "bl ram_hardfault_hook\n"
+    );
+}
+static void __attribute__((noinline, used)) __not_in_flash_func(ram_hardfault_hook)(uint32_t *frame) {
+    // 例外フレーム: [0]=r0 [1]=r1 [2]=r2 [3]=r3 [4]=r12 [5]=lr [6]=pc [7]=xpsr
+    ram_diag_clear();
+    ram_diag_addc('[');
+    ram_diag_addc('H');
+    ram_diag_addc('F');
+    ram_diag_addc('!');
+    ram_diag_addc(']');
+    ram_diag_addc(' ');
+    ram_diag_addc('p');
+    ram_diag_addc('c');
+    ram_diag_addc('=');
+    ram_diag_addhex(frame[6] & ~1u);
+    ram_diag_addc(' ');
+    ram_diag_addc('l');
+    ram_diag_addc('r');
+    ram_diag_addc('=');
+    ram_diag_addhex(frame[5]);
+    ram_diag_addc(' ');
+    ram_diag_addc('c');
+    ram_diag_addc('1');
+    ram_diag_addc('t');
+    ram_diag_addc('r');
+    ram_diag_addc('=');
+    ram_diag_addhex((uint32_t)psg_core1_trace);
+    ram_diag_send();
+    for (;;) {
+        tight_loop_contents();
+    }
+}
 
 // パーク待機 (RAM実行): ACK送信→RESUME受信待ちの間にXIP命令フェッチを一切行わない。
 // ACKはレジスタ直叩き1命令 (sio_hw->fifo_wr = 値) で送り、以降このRAM関数内で完結する。
@@ -89,9 +133,15 @@ static void __not_in_flash_func(core1_watchdog_feed)(void) {
 static void __not_in_flash_func(core1_flash_wait_ready)(void) {
     uint8_t tx[2] = {0x05, 0x00};
     uint8_t rx[2];
+    uint32_t guard = 0;
     do {
         core1_watchdog_feed();
         flash_do_cmd(tx, rx, 2);
+        flash_core1_status_last = rx[1]; // 診断: 最終ステータス値 (core0のタイムアウト表示用)
+        if (++guard > 1000000u) { // 異常: ビジーが解けない (ゴミ値等) はアボートしてcore0へ完了を報告
+            flash_core1_abort = 1;
+            break;
+        }
     } while (rx[1] & 0x01);
 }
 
@@ -101,6 +151,7 @@ static void __not_in_flash_func(core1_flash_program_sector)(uint32_t offs, const
     uint8_t tx[4 + 256];
     uint8_t rx[4 + 256];
     for (int page = 0; page < FLASH_SECTOR_SIZE / 256; page++) {
+        if (flash_core1_abort) break; // 異常アボート (SAVE内容は無効、エラー報告へ)
         uint32_t addr = offs + (uint32_t)page * 256;
         tx[0] = 0x02;
         tx[1] = (uint8_t)(addr >> 16);
@@ -159,12 +210,22 @@ void psg_core1_park(void) {
 // core1にフラッシュ消去/書込みを依頼し、完了まで core0 は RAM ループで待機する。
 // フラッシュチップがビジーになると core0 の XIP フェッチが停止するため、
 // この関数全体を RAM 配置にし、命令フェッチを一切行わないようにする。
-static void __attribute__((noinline)) __not_in_flash_func(psg_core1_flash_op_and_wait)(uint32_t offset, const uint8_t *data) {
+// 診断: 待機中はRAM診断チャネル (storage.h) でハートビートを送信し、3秒でタイムアウト
+// を記録する (待機は継続: core1のwait_ready反復上限が異常アボートする。戻り値1=エラー)
+static int __attribute__((noinline)) __not_in_flash_func(psg_core1_flash_op_and_wait)(uint32_t offset, const uint8_t *data) {
     flash_core1_offset = offset;
     flash_core1_data = data;
     flash_core1_done = 0;
+    flash_core1_abort = 0;
+    flash_core1_status_last = 0xFF;
     psg_core1_parked = false; // 今回は RESUME 待ち不要
     __compiler_memory_barrier();
+
+    // 診断: フラッシュ操作中の割込み継続確認 (XIP復帰後の呼出のみ安全)
+    uint32_t diag_t0 = (uint32_t)time_us_64();
+    uint32_t diag_irq0 = ntscv_debug_irq_count();
+    uint32_t diag_mrg0 = ntscv_debug_events();
+    diag_log("[S10] flash op start");
 
     // 完了フラグを RAM でポーリング。DMA 合成割込みのみ許可して TV 信号を維持。
     // SysTick はフラッシュビジー中にハンドラをフェッチしようとしてストールするため停止する。
@@ -185,14 +246,91 @@ static void __attribute__((noinline)) __not_in_flash_func(psg_core1_flash_op_and
     sio_hw->fifo_wr = PSG_CORE1_CMD_FLASH;
     __sev();
 
-    // 完了フラグが立つまで RAM でポーリング
-    while (!flash_core1_done) tight_loop_contents();
+    // 診断: ポーリング開始 (RAMチャネル: XIP停止中も送信可)
+    ram_diag_clear();
+    ram_diag_addc('[');
+    ram_diag_addc('S');
+    ram_diag_addc('1');
+    ram_diag_addc('0');
+    ram_diag_addc('b');
+    ram_diag_addc(']');
+    ram_diag_send();
+
+    // 完了フラグが立つまで RAM でポーリング。
+    // 約100-200ms毎にRAMチャネルへハートビート (core0の生存とDMA IRQ継続の実時間証明)。
+    // 3秒経過したらタイムアウトを記録して待機継続 (IRQは維持: core1の異常は
+    // wait_ready反復上限がアボートし、完了後に[S11]とステータスを報告する)
+    uint32_t hb = 0;
+    uint8_t timed_out = 0;
+    while (!flash_core1_done) {
+        tight_loop_contents();
+        if (++hb >= 2000000u) {
+            hb = 0;
+            // 直接レジスタ読出し (time_us_64はFLASH配置のためXIP停止中の呼出は不可)
+            uint32_t now = timer_hw->timerawl;
+            ram_diag_clear();
+            ram_diag_addc('[');
+            ram_diag_addc('S');
+            ram_diag_addc('1');
+            ram_diag_addc('0');
+            ram_diag_addc('p');
+            ram_diag_addc(']');
+            ram_diag_addc(' ');
+            ram_diag_addc('t');
+            ram_diag_addc('=');
+            ram_diag_addhex(now - diag_t0);
+            ram_diag_addc(' ');
+            ram_diag_addc('i');
+            ram_diag_addc('r');
+            ram_diag_addc('q');
+            ram_diag_addc('=');
+            ram_diag_addhex(ntscv_debug_irq_count() - diag_irq0);
+            ram_diag_addc(' ');
+            ram_diag_addc('m');
+            ram_diag_addc('r');
+            ram_diag_addc('g');
+            ram_diag_addc('=');
+            ram_diag_addhex((uint32_t)(uint16_t)(ntscv_debug_events() - diag_mrg0));
+            ram_diag_send();
+            if (!timed_out && (uint32_t)(now - diag_t0) >= 3000000u) {
+                timed_out = 1;
+                ram_diag_clear();
+                ram_diag_addc('[');
+                ram_diag_addc('S');
+                ram_diag_addc('1');
+                ram_diag_addc('0');
+                ram_diag_addc('!');
+                ram_diag_addc(']');
+                ram_diag_addc('T');
+                ram_diag_addc('I');
+                ram_diag_addc('M');
+                ram_diag_addc('E');
+                ram_diag_addc('O');
+                ram_diag_addc('U');
+                ram_diag_addc('T');
+                ram_diag_send();
+            }
+        }
+    }
     systick_hw->csr = systick_ctrl;
     nvic_hw->iser = nvic_state;
 
     // watchdog を再有効化
     watchdog_hw->load = WATCHDOG_TIMEOUT_MS * 2000;
     hw_set_bits(&watchdog_hw->ctrl, WATCHDOG_CTRL_ENABLE_BITS);
+
+    // 診断: XIP復帰後にのみ呼べる。irq=操作中のDMA IRQ呼出増分 (約508µs毎+1が正常継続)
+    diag_log("[S11] flash op done");
+    diag_log_hex("  ms=", ((uint32_t)time_us_64() - diag_t0) / 1000u);
+    diag_log_hex("  irq=", ntscv_debug_irq_count() - diag_irq0);
+    diag_log_hex("  mrg=", (uint32_t)(uint16_t)(ntscv_debug_events() - diag_mrg0));
+    if (timed_out || flash_core1_abort) {
+        diag_log("[S10x] FLASH OP ABNORMAL - core1 status/abort/trace:");
+        diag_log_hex("  stat=", flash_core1_status_last);
+        diag_log_hex("  abrt=", flash_core1_abort);
+        diag_log_hex("  c1tr=", psg_core1_trace);
+    }
+    return (timed_out || flash_core1_abort) ? 1 : 0;
 }
 
 void psg_core1_resume(void) {

@@ -85,6 +85,9 @@ static volatile uint16_t arm_next[NTSCV_DMA_CHANNELS];
 /* 診断: 割込み合流 (長期割込み遅延) の累積回数 */
 static volatile uint16_t merge_events = 0;
 
+/* 診断: DMA IRQハンドラ呼出累計 (フラッシュ書込み中の割込み継続確認用) */
+volatile uint32_t ntscv_irq_count = 0;
+
 static inline uint16_t advance_chunk(uint16_t n)
 {
     /* 1チャネルは4スロット (2ライン×4=8ライン) 先のチャンクを担当する。
@@ -103,6 +106,7 @@ static void __not_in_flash_func(arm_channel)(int idx)
 
 static void __not_in_flash_func(ntscv_dma_irq_handler)(void)
 {
+    ntscv_irq_count++;
     uint32_t done = dma_hw->ints1;
     dma_hw->ints1 = done;
 
@@ -329,9 +333,15 @@ uint16_t ntscv_debug_scanline(void)
     return n >= NTSCV_LINES_PER_FRAME ? (uint16_t)(n - NTSCV_LINES_PER_FRAME) : n;
 }
 
-uint16_t ntscv_debug_events(void)
+// RAM配置必須: SAVE等のフラッシュ書込み中 (XIP停止) にコア0のハートビートから呼ばれる
+uint16_t __attribute__((noinline)) __not_in_flash_func(ntscv_debug_events)(void)
 {
     return merge_events;
+}
+
+uint32_t __attribute__((noinline)) __not_in_flash_func(ntscv_debug_irq_count)(void)
+{
+    return ntscv_irq_count;
 }
 
 uint32_t ntscv_guard_a(void)

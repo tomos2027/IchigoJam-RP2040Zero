@@ -58,6 +58,37 @@ static void neo_refresh() {
     ws_out(neo_port, neo_leds, 1);
 }
 
+//NEOSCROLL色記号→RGB555 (実体は下記、ns_color_of)
+static int ns_color_of(char c);
+
+//パック色 (RGB555) をposへ直接書込み
+static void neo_put_px555(int pos, int c) {
+    int r, g, b;
+    neo_unpack555(c, &r, &g, &b);
+    neo_put_px(pos, r, g, b);
+}
+
+//色記号文字列の解析 (NEOSCROLL.PRINTのcolorsと共通の記号、"R"/"G"/"B"等)。
+//次トークンが文字列リテラルなら先頭1文字をns_color_ofでRGB555へ変換して*outへ返す。
+//戻り値: 1=文字列色記号を解析した、0=文字列でない (token_back済み、何も消費しない)、
+//        -1=未定義記号/空文字列 (エラー設定済み)
+//※裸の英字 (B等) はBASIC変数のため記号としては使えない (文字列のみ対応)
+static int neo_try_color_symbol(int* out) {
+    Token t; Token_get(t);
+    if (t.code != TOKEN_STRING) {
+        token_back();
+        return 0;
+    }
+    char* s = token_skipstr();
+    int c = ns_color_of(s[0]);
+    if (c < 0) {
+        command_error(ERR_ILLEGAL_ARGUMENT);
+        return -1;
+    }
+    *out = c;
+    return 1;
+}
+
 //関数共通: 括弧内の式をカンマ区切りでcount個読み、')'を確認する (func_rgbと同じパターン)
 //戻り値: 1=成功、0=エラー設定済み
 static int neo_func_args(int* out, int count) {
@@ -96,8 +127,8 @@ S_INLINE void command_neo_setup() {
     ws_data_offset = 0;
 }
 
-//NEO.PIXEL pos,R,G,B{,disable} / NEO.PIXEL pos,COLOR{,disable}
-//(pos以降の引数の個数で判別: 1-2個=COLOR{,disable}、3-4個=R,G,B{,disable}。disable=1は書込みのみ)
+//NEO.PIXEL pos,R,G,B{,disable} / NEO.PIXEL pos,COLOR{,disable} / NEO.PIXEL pos,"記号"{,disable}
+//(pos以降の判別: 文字列=色記号、1-2個=COLOR{,disable}、3-4個=R,G,B{,disable}。disable=1は書込みのみ)
 S_INLINE void command_neo_pixel() {
     int pos = token_expression();
     IJB_ERR_CHK();
@@ -105,6 +136,33 @@ S_INLINE void command_neo_pixel() {
         command_error(ERR_SYNTAX_ERROR);
         return;
     }
+    //色記号文字列指定 (NEOSCROLL記号と共通): NEO.PIXEL pos,"記号"{,disable}
+    int color;
+    int sym = neo_try_color_symbol(&color);
+    if (sym < 0) {
+        return; // 未定義記号/空文字列 (エラー設定済み)
+    }
+    if (sym > 0) {
+        int disable = 0;
+        if (token_getCode() == TOKEN_COMMA) {
+            disable = token_expression();
+            IJB_ERR_CHK();
+        } else {
+            token_back();
+        }
+        token_end();
+        IJB_ERR_CHK();
+        if (pos < 0 || pos >= neo_leds) {
+            command_error(ERR_ILLEGAL_ARGUMENT);
+            return;
+        }
+        neo_put_px555(pos, color);
+        if (!disable) {
+            neo_refresh();
+        }
+        return;
+    }
+    //数値指定 (既存): pos,COLOR{,disable} / pos,R,G,B{,disable}
     int a[4];
     int cnt = 0;
     for (;;) {
@@ -138,8 +196,9 @@ S_INLINE void command_neo_pixel() {
     }
 }
 
-//NEO.STRIP s,e,R,G,B{,disable} / NEO.STRIP s,e,COLOR{,disable} — s〜e (両端含む) へ一括設定
-//(s,e以降の引数の個数で判別: 1-2個=COLOR{,disable}、3-4個=R,G,B{,disable})
+//NEO.STRIP s,e,R,G,B{,disable} / NEO.STRIP s,e,COLOR{,disable} / NEO.STRIP s,e,"記号"{,disable}
+//— s〜e (両端含む) へ一括設定
+//(s,e以降の判別: 文字列=色記号、1-2個=COLOR{,disable}、3-4個=R,G,B{,disable})
 S_INLINE void command_neo_strip() {
     int s = token_expression();
     IJB_ERR_CHK();
@@ -153,6 +212,35 @@ S_INLINE void command_neo_strip() {
         command_error(ERR_SYNTAX_ERROR);
         return;
     }
+    //色記号文字列指定 (NEOSCROLL記号と共通): NEO.STRIP s,e,"記号"{,disable}
+    int color;
+    int sym = neo_try_color_symbol(&color);
+    if (sym < 0) {
+        return; // 未定義記号/空文字列 (エラー設定済み)
+    }
+    if (sym > 0) {
+        int disable = 0;
+        if (token_getCode() == TOKEN_COMMA) {
+            disable = token_expression();
+            IJB_ERR_CHK();
+        } else {
+            token_back();
+        }
+        token_end();
+        IJB_ERR_CHK();
+        if (s < 0 || e < s || e >= neo_leds) {
+            command_error(ERR_ILLEGAL_ARGUMENT);
+            return;
+        }
+        for (int i = s; i <= e; i++) {
+            neo_put_px555(i, color);
+        }
+        if (!disable) {
+            neo_refresh();
+        }
+        return;
+    }
+    //数値指定 (既存): s,e,COLOR{,disable} / s,e,R,G,B{,disable}
     int a[4];
     int cnt = 0;
     for (;;) {
@@ -420,7 +508,7 @@ static int ns_mw = 8, ns_mh = 8; // モジュール寸法 (NEOSCROLL.SETUPのmw,
 static int ns_cw = 8, ns_ch = 8; // キャンバス寸法 (省略時=表示寸法)
 static int ns_layout = 0;      // 配線レイアウト 0-5
 static int ns_flip = 0;        // 1=表示を上下反転
-static int ns_bright = 128;    // 全体明るさ 0-255 (既定128、SHOWで適用、255=等倍)
+static int ns_bright = 255;    // 全体明るさ 0-255 (既定255=等倍、SHOWで適用)
 static int ns_tbright = 255;   // テキスト明るさ 0-255 (既定255)
 static int ns_font = 0;        // oled_font_tablesのindex (0=5x7プロポーショナル)
 static int ns_curx = 0, ns_cury = 0; // 描画カーソル (左上原点・y下向き)
@@ -488,20 +576,21 @@ static int ns_check_used() {
 }
 
 //Annex互換の1文字色記号 → RGB555 (未定義文字は-1で色変更なし)
+//色値はAnnex (HTML色名) 準拠。RGB555量子化後の出力値は docs/NEO_JA.md の色表を参照
 static int ns_color_of(char c) {
     switch (c) {
         case 'B': return neo_pack555(0, 0, 255);     // BLUE
         case 'b': return neo_pack555(0, 0, 128);     // NAVY
         case 'C': return neo_pack555(0, 255, 255);   // CYAN
-        case 'c': return neo_pack555(0, 128, 128);   // DARKCYAN
+        case 'c': return neo_pack555(0, 139, 139);   // DARKCYAN
         case 'G': return neo_pack555(0, 255, 0);     // GREEN
-        case 'g': return neo_pack555(0, 128, 0);     // DARKGREEN
+        case 'g': return neo_pack555(0, 100, 0);     // DARKGREEN
         case 'K': return 0;                          // BLACK
-        case 'k': return neo_pack555(64, 64, 64);    // DARKGREY
+        case 'k': return neo_pack555(169, 169, 169); // DARKGREY
         case 'M': return neo_pack555(255, 0, 255);   // MAGENTA
         case 'm': return neo_pack555(128, 0, 0);     // MAROON
         case 'R': return neo_pack555(255, 0, 0);     // RED
-        case 'r': return neo_pack555(128, 0, 0);     // DARKRED
+        case 'r': return neo_pack555(139, 0, 0);     // DARKRED
         case 'Y': return neo_pack555(255, 255, 0);   // YELLOW
         case 'y': return neo_pack555(173, 255, 47);  // GREENYELLOW
         case 'O': return neo_pack555(255, 165, 0);   // ORANGE
@@ -658,7 +747,7 @@ S_INLINE void command_ns_setup() {
     ns_cw = w;
     ns_ch = h;
     memset(ns_canvas, 0, sizeof ns_canvas);
-    ns_bright = 128;
+    ns_bright = 255;
     ns_tbright = 255;
     ns_font = 0;
     ns_curx = 0;
@@ -685,7 +774,7 @@ S_INLINE void command_ns_delete() {
     ns_dw = ns_dh = ns_cw = ns_ch = 8;
     ns_mw = ns_mh = 8;
     ns_layout = ns_flip = 0;
-    ns_bright = 128;
+    ns_bright = 255;
     ns_tbright = 255;
     ns_font = 0;
     ns_curx = ns_cury = 0;
