@@ -44,6 +44,7 @@ S_INLINE int basic_listSize();
 
 static int IJB_save(int n, uint8* list, int size); // 0:ok
 static int IJB_load(int n, uint8* list, int sizelimit, int init); // ret:size if:-1 _g.err
+static int IJB_distance(int trig_port, int echo_port); // HC-SR04超音波距離 (cm、応答なし=-1)
 static int i2c0_init(); /* Initialize I2C module  0:ok 1:_g.err */
 S_INLINE int IJB_file();
 
@@ -470,6 +471,7 @@ S_INLINE void command_ws_matrix(); // WS.MATRIX w,h{,flags} (マトリクス寸�
 S_INLINE void command_ws_xy(); // WS.XY x,y,R,G,B (座標で1px書込み)
 S_INLINE void command_ws_setup(); // WS.SETUP n{,offset}{,invert} (WS.LEDのLED数上限・オフセット・信号反転)
 S_INLINE int func_rgb(); // RGB(r,g,b) 関数 (RGB332値を返す)
+S_INLINE int func_distance(); // DISTANCE(trig_out,echo_in) 関数 (HC-SR04超音波距離cm、応答なし=-1)
 // NEO.* / NEOSCROLL.* コマンド・関数 (ext_neo.hで定義、Annex WiFi互換のWS2812制御)
 S_INLINE void command_neo_setup(); // NEO.SETUP port{,nb_led}
 S_INLINE void command_neo_strip(); // NEO.STRIP s,e,R,G,B{,disable} / s,e,COLOR{,disable}
@@ -1458,6 +1460,8 @@ static int16 token_expression5() {
 			return psg_sound();
 		case TOKEN_ANA:
 			return IJB_ana(token_opt1());
+		case TOKEN_DISTANCE:
+			return func_distance();
 		case TOKEN_FREE:
 //			return (uint16)((uint)__get_MSP() - (uint)&_ebss); // RAM調べ 1.2b13 824byte
 			return (IJB_SIZEOF_LIST - 2) - _g.listsize; // 1024byte化
@@ -4254,6 +4258,29 @@ S_INLINE int func_rgb() {
 	}
 	int r = n[0] & 0xFF, g = n[1] & 0xFF, b = n[2] & 0xFF;
 	return ((r >> 5) << 5) | (((g >> 5) & 7) << 2) | ((b >> 6) & 3);
+}
+
+//DISTANCE(trig_out, echo_in) — HC-SR04超音波距離センサ (io.hのIJB_distanceで測定)
+//戻り値: 距離cm (整数)。応答なし/範囲外/SDON共有ピン=-1、ポート範囲外=Illegal argument+0
+S_INLINE int func_distance() {
+	int n[2];
+	for (int i = 0;; i++) {
+		n[i] = token_expression();
+		IJB_ERR_CHK1(0);
+		if (i == 1)
+			break;
+		Token t; Token_get(t);
+		if (t.code != TOKEN_COMMA) {
+			command_error(ERR_SYNTAX_ERROR);
+			return 0;
+		}
+	}
+	Token t; Token_get(t);
+	if (t.code != TOKEN_PAREN_E) {
+		command_error(ERR_SYNTAX_ERROR);
+		return 0;
+	}
+	return IJB_distance(n[0], n[1]);
 }
 
 // ===== 4K版: IR.IN / ENV.IN コマンド (GivetakeJam_P実装を移植) =====

@@ -260,6 +260,81 @@ INLINE int IJB_ana(int n) {
     return 0;
 }
 
+//HC-SR04超音波距離センサ: DISTANCE(trig_out, echo_in) — io.h実装 (basic.hから前方宣言)
+//TRIG (OUTポート) へ10µs以上のHIGHパルスを送り、ECHO (INポート) のHIGHパルス幅から
+//距離を算出する (音速340m/s往復で58µs/cm)。
+//戻り値: 距離cm (整数、四捨五入)。応答なし/範囲外=-1。SDON中の共有ピン=-1。
+//ポート範囲外=Illegal argumentエラー+0。
+//測定中は映像DMA以外の割込みを停止する (SAVEと同じ方式)。全割込みを止めると
+//DMA再armが止まりリングが直近チャンクをリピートして映像の垂直同期が乱れるため、
+//映像DMA割込み (DMA_IRQ_1) は動作継続させる。測定誤差は映像ハンドラ実行時間分
+//(最悪+約1cm) に収まる。
+//ECHO幅は「最初に反射が戻るまでの時間」のため個々の測定値は真の距離以下にしか
+//ならない (弱エコー/送信バースト干渉/極接近時の反射打ち消しで短く出る)。
+//このため10ms間隔で3回測定し最大値を採用して断続的な短読みを補正する
+//(最大値も100µs≒1.7cm未満なら-1=範囲外)。タイムアウトは幅0として扱い残りで補正
+int IJB_distance(int trig_port, int echo_port) {
+    if (!(1 <= trig_port && trig_port <= IO_PIN_NUM) || !(1 <= echo_port && echo_port <= IO_PIN_NUM)) {
+        command_error(ERR_ILLEGAL_ARGUMENT);
+        return 0;
+    }
+    uint8 trig = out_pins[trig_port - 1];
+    uint8 echo = in_pins[echo_port - 1];
+    if (sd_pin_reserved(trig) || sd_pin_reserved(echo)) {
+        return -1;//SD動作中の共有ピン (OUT1/3/4、IN3/4) は測定しない
+    }
+    gpio_init(trig);
+    gpio_set_dir(trig, GPIO_OUT);
+    gpio_put(trig, 0);
+    gpio_init(echo);
+    gpio_set_dir(echo, GPIO_IN);
+    gpio_pull_down(echo);
+    busy_wait_us(60);//センサ安定待ち
+    //映像DMA (DMA_IRQ_1) 以外の割込みを停止 (SAVEと同じNVICマスク方式)
+    uint32_t nvic_state = nvic_hw->iser;
+    nvic_hw->icer = ~(1u << DMA_IRQ_1);
+    uint32_t max_us = 0;
+    for (int attempt = 0; attempt < 3; attempt++) {
+        if (attempt) {
+            busy_wait_us(10000);//測定間隔
+        }
+        gpio_put(trig, 1);
+        busy_wait_us(12);//TRIG: 10µs以上のHIGHパルス
+        gpio_put(trig, 0);
+        uint32_t us = 0;
+        //ECHOの立ち上がり待ち (タイムアウト20ms: 障害物なし/配線不良)
+        uint64_t t0 = time_us_64();
+        uint8_t ok = 0;
+        while (!gpio_get(echo)) {
+            if (time_us_64() - t0 > 20000ull) {
+                break;//応答なし (このサンプルは幅0)
+            }
+        }
+        if (gpio_get(echo)) {
+            //ECHOの立ち下がり待ち (パルス幅=距離に比例。タイムアウト25ms≒430cm)
+            t0 = time_us_64();
+            ok = 1;
+            while (gpio_get(echo)) {
+                if (time_us_64() - t0 > 25000ull) {
+                    ok = 0;
+                    break;
+                }
+            }
+            if (ok) {
+                us = (uint32_t)(time_us_64() - t0);
+            }
+        }
+        if (us > max_us) {
+            max_us = us;
+        }
+    }
+    nvic_hw->iser = nvic_state;
+    if (max_us < 100) {//有効なパルスなし (2cm≒116µs未満は反射打ち消し/範囲外)
+        return -1;
+    }
+    return (int)((max_us + 29) / 58);//58µs/cm (四捨五入)
+}
+
 INLINE void IJB_clo() {
     io_init();
 }
