@@ -1,0 +1,44 @@
+NEOSCROLL.* (ドットマトリクス)
+NEOJAM (カラー表示・テスト実装)
+-----------------------------------------------------------
+[ 機能 ]
+WS2812B ドットマトリクス (8x8 モジュール等) への
+テキスト表示・スクロールを行います。
+
+[ コマンド 書式 ]
+NEOSCROLL.SETUP <devices>,<lines>,<port>{,<layout>}
+  {,<w>,<h>}{,<flip>}{,<mw>,<mh>}
+NEOSCROLL.FILL <COLOR>{,<x>,<y>,<w>,<h>}
+NEOSCROLL.TEXT.POS <x>,<y>
+NEOSCROLL.TEXT.FONT <n>
+NEOSCROLL.TEXT.BRIGHTNESS <b>
+NEOSCROLL.BRIGHTNESS <b>
+NEOSCROLL.PRINT "<text>"{,"<colors>"}
+NEOSCROLL.SHOW <x>,<y>
+NEOSCROLL.LIMITS <x1>{,<x2>{,<y1>{,<y2>}}}
+NEOSCROLL.SYNC
+NEOSCROLL.MODE <m>
+NEOSCROLL.SCROLL / A=NEOSCROLL.SCROLL
+NEOSCROLL.OSCILLATE / A=NEOSCROLL.OSCILLATE
+NEOSCROLL.X() / NEOSCROLL.Y()
+NEOSCROLL.DELETE
+
+[ 例 ]
+NEOSCROLL.SETUP 1,1,7,1
+NEOSCROLL.TEXT.POS 0,1
+NEOSCROLL.PRINT "HELLO","R"
+NEOSCROLL.SHOW 0,0
+
+[ 解説 ]
+キャンバス (最大 8192px) に描画し、SHOW で表示範囲を
+LED へ転送します。<devices>×8 × <lines>×8 px の表示
+(モジュール寸法 mw,mh で 5x5・4x4 等も指定可)。
+TEXT.POS は左上原点・y 下向き。PRINT の <colors> は
+1 文字 1 色の色記号 (R=赤 G=緑 B=青 W=白 K=黒 等、
+省略部分は前回色を引継)。BRIGHTNESS の既定は 255。
+SCROLL/OSCILLATE は呼出ごとに 1px スクロール
+(関数形式は周回/始点復帰時に 1 を返す)。
+MODE 0=右→左 1=下→上 2=左→右 3=上→下。
+SETUP 前の他のコマンドは Illegal argument です。
+SPRITESHEET/SPRITE (BMP 描画) は非対応、フォントは内蔵 5 種。
+詳細は docs/NEO_JA.md を参照して下さい。

@@ -51,7 +51,6 @@ NEOJAM は単一プラットフォームのため、
 - `COLOR` / `COL`・`PAL`・`ATTR` NTSC カラー表示 (VIDEO 9/10)
 - `SDON` / `SDOFF` SD カード (FAT32、スロット 200-299、GP6/7/8/10/11 共有)
 - `PWM` 高速モード (負の周期で 1/48 マイクロ秒単位)
-- `IOT.IN` / `IOT.OUT` sakura.io モジュール (I2C、GP4/5)
 - `EJ` OLED表示 (SSD1306 128x64・I2C 0x3C、GP4/5、Milkjam IOTPAD互換)
 - `VIDEO` 9 (32x24 16 色) / 10 (42x27 16 色)
 

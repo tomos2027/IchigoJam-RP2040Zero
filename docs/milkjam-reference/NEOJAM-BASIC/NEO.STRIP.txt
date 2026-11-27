@@ -1,0 +1,23 @@
+NEO.STRIP
+NEOJAM (カラー表示・テスト実装)
+-----------------------------------------------------------
+[ 機能 ]
+WS2812 ストリップの連続範囲に色を一括設定します。
+
+[ コマンド 書式 ]
+NEO.STRIP <s>,<e>,<R>,<G>,<B>{,<disable>}
+NEO.STRIP <s>,<e>,<COLOR>{,<disable>}
+NEO.STRIP <s>,<e>,"<色記号>"{,<disable>}
+
+[ 例 ]
+NEO.STRIP 0,7,0,40,0
+NEO.STRIP 0,7,"R"
+
+[ 解説 ]
+<s>〜<e> (両端含む) を一括設定します。
+<s> < 0、<e> < <s>、<e> ≥ LED 数は Illegal argument です。
+色の指定形式は NEO.PIXEL と同じ
+(R,G/B 個別・RGB555 パック色・色記号文字列)。
+<disable> に 1 を指定すると書込みのみで送信しない。
+NEO.SETUP・NEO.PIXEL も参照して下さい。
+詳細は docs/NEO_JA.md を参照して下さい。

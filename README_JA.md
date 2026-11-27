@@ -79,6 +79,8 @@ SOUND 0,228:SOUND 1,7:SOUND 7,254:SOUND 8,15   … MSX PSGレジスタ直接操�
 
 ## 環境構築 (ビルド)
 
+> **初めてビルドする方は、ステップごとに詳しく説明した [docs/BUILD_JA.md](docs/BUILD_JA.md) (初心者向けビルドガイド) を参照してください。**
+
 **CMake** と **GCC (arm-none-eabi)** をインストールし、リポジトリ直下に依存ライブラリをclone:
 
 ```sh

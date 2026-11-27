@@ -1,0 +1,24 @@
+NEO.ROTATELEFT / NEO.ROTATERIGHT
+NEOJAM (カラー表示・テスト実装)
+-----------------------------------------------------------
+[ 機能 ]
+WS2812 ストリップの内容を回転します
+(端の画素は反対側へ周回)。
+
+[ コマンド 書式 ]
+NEO.ROTATELEFT <n>{,<s>,<e>{,<disable>}}
+NEO.ROTATERIGHT <n>{,<s>,<e>{,<disable>}}
+
+[ 例 ]
+NEO.ROTATELEFT 1
+NEO.ROTATERIGHT 2,0,15
+
+[ 解説 ]
+範囲 [s,e] (省略時は全体) 内の内容を <n> 個回転します。
+ROTATELEFT は先頭方向、ROTATERIGHT は終端方向へ移動し、
+端の画素は反対側へ周回します (消えません)。
+<n> は範囲長で剰余を取るため大きな値も指定できます。
+<disable> に 1 を指定すると書込みのみで送信しない。
+NEO.SHIFTLEFT/SHIFTRIGHT は空いた画素が黒になる点が
+異なります。NEO.SETUP も参照して下さい。
+詳細は docs/NEO_JA.md を参照して下さい。

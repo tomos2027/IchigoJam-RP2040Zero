@@ -1,0 +1,22 @@
+NEO.SHIFTLEFT / NEO.SHIFTRIGHT
+NEOJAM (カラー表示・テスト実装)
+-----------------------------------------------------------
+[ 機能 ]
+WS2812 ストリップの内容をシフトします
+(空いた画素は黒になります)。
+
+[ コマンド 書式 ]
+NEO.SHIFTLEFT <n>{,<s>,<e>{,<disable>}}
+NEO.SHIFTRIGHT <n>{,<s>,<e>{,<disable>}}
+
+[ 例 ]
+NEO.SHIFTLEFT 1
+
+[ 解説 ]
+範囲 [s,e] (省略時は全体) 内の内容を <n> 個シフトします。
+SHIFTLEFT は先頭方向へ移動し末尾側が黒に、
+SHIFTRIGHT は終端方向へ移動し先頭側が黒になります。
+<n> が範囲長以上の場合は範囲全体が黒になります。
+端が周回する回転は NEO.ROTATELEFT/ROTATERIGHT を使用して下さい。
+<disable> に 1 を指定すると書込みのみで送信しない。
+詳細は docs/NEO_JA.md を参照して下さい。

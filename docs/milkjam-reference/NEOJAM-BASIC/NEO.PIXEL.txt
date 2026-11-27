@@ -1,0 +1,25 @@
+NEO.PIXEL
+NEOJAM (カラー表示・テスト実装)
+-----------------------------------------------------------
+[ 機能 ]
+WS2812 ストリップの指定位置に色を設定します。
+
+[ コマンド 書式 ]
+NEO.PIXEL <pos>,<R>,<G>,<B>{,<disable>}
+NEO.PIXEL <pos>,<COLOR>{,<disable>}
+NEO.PIXEL <pos>,"<色記号>"{,<disable>}
+
+[ 例 ]
+NEO.PIXEL 0,255,0,0
+NEO.PIXEL 0,NEO.RGB(255,0,0)
+NEO.PIXEL 0,"R"
+
+[ 解説 ]
+位置 <pos> (0-LED 数-1) に色を設定します。
+R,G,B は各 0-255、<COLOR> は 16bit RGB555 パック色
+(NEO.RGB() 等)。<色記号> は NEOSCROLL と共通の色記号文字列
+("R"=赤 等、先頭 1 文字を適用)。
+<disable> に 1 を指定すると書込みのみで送信しない
+(連続書換後に NEO.REFRESH で送信)。省略時は即送信します。
+NEO.SETUP・NEO.STRIP・NEO.RGB も参照して下さい。
+詳細は docs/NEO_JA.md を参照して下さい。

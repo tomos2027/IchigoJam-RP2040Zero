@@ -1,0 +1,29 @@
+NEO.RGB ほか色関数
+NEOJAM (カラー表示・テスト実装)
+-----------------------------------------------------------
+[ 機能 ]
+NEO.* / NEOSCROLL.* 用の色 (16bit RGB555 パック色、0-32767)
+を作成・変換する関数群です。
+
+[ 関数 書式 ]
+NEO.RGB(<R>,<G>,<B>)
+NEO.GETPIXEL(<pos>)
+NEO.DIM(<COLOR>,<gain>)
+NEO.LIGHTEN(<COLOR>,<gain>)
+NEO.DARKEN(<COLOR>,<gain>)
+NEO.LINEARBLEND(<C1>,<C2>,<p>)
+NEO.BILINEARBLEND(<UL>,<UR>,<LL>,<LR>,<x>,<y>)
+
+[ 例 ]
+NEO.PIXEL 0,NEO.RGB(255,128,0)
+
+[ 解説 ]
+NEO.RGB : 8bit R,G,B (0-255) をRGB555パック色へ変換
+NEO.GETPIXEL : バッファの <pos> の現在色を返す
+NEO.DIM : 明るさを gain 倍 (1/256 固定小数、256=等倍、512=2倍)
+NEO.LIGHTEN : 白へブレンド (gain 0-256、256=白)
+NEO.DARKEN : 黒へブレンド (gain 0-256、256=黒)
+NEO.LINEARBLEND : 2色を p (0-256、256=C2) で線形補間
+NEO.BILINEARBLEND : 4隅の色を x,y (0-256) で2次元補間
+NEO.GETPIXEL の pos 範囲外は Illegal argument です。
+詳細は docs/NEO_JA.md を参照して下さい。

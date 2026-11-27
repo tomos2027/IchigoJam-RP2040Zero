@@ -37,3 +37,28 @@
 ・割込み・タイミング競合の修正 (keybuf 競合解消、
   time_us_64 torn read 対策、WS2812 ビットバング後の
   映像位相復旧、TinyUSB パッチ適用のビルド時検証)
+・WS.SETUP 追加 (WS.LED の LED 数上限・読み込みオフセット・
+  出力信号反転の設定)
+・NEO.* / NEOSCROLL.* 追加 (Annex WiFi 互換 WS2812 制御):
+  ストリップは NEO.SETUP/PIXEL/STRIP/ROTATELEFT/ROTATERIGHT/
+  SHIFTLEFT/SHIFTRIGHT/REFRESH と RGB555 色関数
+  (NEO.RGB/GETPIXEL/DIM/LIGHTEN/DARKEN/LINEARBLEND/
+  BILINEARBLEND)、8x8 ドットマトリクスは NEOSCROLL.SETUP
+  (モジュール寸法 5x5・4x4 等も指定可)/FILL/TEXT.POS/
+  TEXT.FONT/TEXT.BRIGHTNESS/BRIGHTNESS/PRINT/SHOW/LIMITS/
+  SYNC/MODE/SCROLL/OSCILLATE/X()/Y()/DELETE
+  (詳細リファレンス docs/NEO_JA.md)
+・STOP コマンド実装 (実行中断、"Break" 表示、CONT で再開)
+・DISTANCE(trig_out,echo_in) 関数追加 (HC-SR04 超音波距離
+  センサ、cm 単位、10ms 間隔 3 回測定の最大値で安定化、
+  応答なし/範囲外=-1)
+・LED コマンドを基板内蔵 WS2812 (GP16) 制御に変更
+  (光度半分の赤色点灯/消灯)
+・システムクロックを 157.5MHz に統一 (サブキャリアを NTSC
+  規格値 3.579545MHz にし、TV で VIDEO 9/10 が白黒表示に
+  なる問題を修正。フィールドレート 60.0716Hz)
+・SAVE/KBD のフラッシュ書込み中の映像維持を強化
+  (ベクタテーブルの RAM 移設、割込み経路の XIP 非依存化、
+  表示更新の RAM 常駐化)
+・WS2812 PIO 送信中の割込みマスク追加 (TX FIFO 枯渇による
+  疑似リセット→パターン重複点灯を防止)

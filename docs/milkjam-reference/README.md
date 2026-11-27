@@ -1,18 +1,19 @@
-# Milkjam / NEOJAM リファレンス
+# NEOJAM リファレンス
 
-同系統の2機種のBASICリファレンスを格納しています。
+NEOJAM (IchigoJam RP2040-Zero 版) のBASICリファレンスを格納しています。
 
-| 機種 | HTML | コマンド別ファイル | 内容 |
-|---|---|---|---|
-| **Milkjam Basic** | [Milkjam.html](Milkjam.html) | [Milkjam-BASIC/](Milkjam-BASIC/) | Raspberry Pi Pico 2 W (RP2350 + WiFi) 版。DVI/NTSC/TFT 3モード、IOTPAD (EJ/PAD.IN)、OLED |
-| **NEOJAM** | [NEOJAM.html](NEOJAM.html) | [NEOJAM-BASIC/](NEOJAM-BASIC/) | Waveshare RP2040-Zero (RP2040) 版。NTSCコンポジット専用、WS.LED 0-11、PSG 3声、SDカード |
+| HTML | コマンド別ファイル | 内容 |
+|---|---|---|
+| [NEOJAM.html](NEOJAM.html) | [NEOJAM-BASIC/](NEOJAM-BASIC/) | Waveshare RP2040-Zero (RP2040) 版。NTSCコンポジット専用、VIDEO 9/10 カラー表示、WS.LED 0-11、NEO.*/NEOSCROLL.*、PSG 3声、SDカード、HC-SR04距離センサ |
 
-どちらも IchigoJam BASIC 1.6.1 (4K版) ベースです。
-各機種の機器固有の仕様 (ピンマップ・保存スロット・拡張コマンド) は
-各ディレクトリの README.md、および各リポジトリの MANUAL_JA.md を参照して下さい。
+IchigoJam BASIC 1.6.1 (4K版) ベースです。
+機器固有の仕様 (ピンマップ・保存スロット・拡張コマンド) は
+各ディレクトリの README.md、およびリポジトリの以下のドキュメントを参照して下さい。
 
-- Milkjam: https://github.com/tomos2027/Milkjam
-- NEOJAM: https://github.com/tomos2027/IchigoJam-RP2040Zero
+- NEOJAM リポジトリ: https://github.com/tomos2027/IchigoJam-RP2040Zero
+  - ユーザーマニュアル: MANUAL_JA.md
+  - NEO.*/NEOSCROLL.* 詳細リファレンス: docs/NEO_JA.md
+  - NTSC映像信号仕様: docs/ntsc_video_spec.md
 
 元となったリファレンス:
 - IchigoJam (公式・CC BY): https://ichigojam.net/
