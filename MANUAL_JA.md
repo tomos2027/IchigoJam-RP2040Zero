@@ -814,6 +814,7 @@ NEOSCROLL.SHOW 0,0
 ## 9. 開発者向け: ビルド方法
 
 > **初めてビルドする方は、ステップごとに詳しく説明した [docs/BUILD_JA.md](docs/BUILD_JA.md) (初心者向けビルドガイド) を参照してください。**
+> **Dockerでビルドする方法は [docs/BUILD_DOCKER_JA.md](docs/BUILD_DOCKER_JA.md) (Dockerビルドガイド) を参照してください** (コンパイラ等のインストール不要)。
 
 依存ライブラリの取得とパッチ適用手順は [README_JA.md](README_JA.md#環境構築) を参照してください。
 

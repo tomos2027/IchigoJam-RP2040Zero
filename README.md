@@ -54,6 +54,7 @@ A port of IchigoJam BASIC 1.6.1 (4K version) for the **Waveshare RP2040-Zero** b
 ## Building
 
 > **Step-by-step beginner guide: [docs/BUILD_JA.md](docs/BUILD_JA.md)** (Japanese — required tools, dependency setup, flashing, troubleshooting)
+> **Docker-based build: [docs/BUILD_DOCKER_JA.md](docs/BUILD_DOCKER_JA.md)** (Japanese — no compiler installation needed, includes `Dockerfile` and build scripts)
 
 ```sh
 git clone https://github.com/tomos2027/IchigoJam-RP2040Zero.git

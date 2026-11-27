@@ -80,6 +80,7 @@ SOUND 0,228:SOUND 1,7:SOUND 7,254:SOUND 8,15   … MSX PSGレジスタ直接操�
 ## 環境構築 (ビルド)
 
 > **初めてビルドする方は、ステップごとに詳しく説明した [docs/BUILD_JA.md](docs/BUILD_JA.md) (初心者向けビルドガイド) を参照してください。**
+> **Dockerでビルドする方法は [docs/BUILD_DOCKER_JA.md](docs/BUILD_DOCKER_JA.md) (Dockerビルドガイド) を参照してください** (コンパイラ等のインストール不要)。
 
 **CMake** と **GCC (arm-none-eabi)** をインストールし、リポジトリ直下に依存ライブラリをclone:
 

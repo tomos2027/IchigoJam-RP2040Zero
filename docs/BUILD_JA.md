@@ -4,6 +4,9 @@
 **ソースコードからコンパイルして、ボードに書き込むまで**を
 初めての方でもできるように、順を追って説明します。
 
+> **Dockerを使えばコンパイラ等のインストールを省略できます**:
+> 詳しくは [docs/BUILD_DOCKER_JA.md](BUILD_DOCKER_JA.md) (Dockerビルドガイド) を参照してください。
+
 ユーザーマニュアル (MANUAL_JA.md)・NEO/NEOSCROLL リファレンス (docs/NEO_JA.md)・
 PSG サウンドリファレンス (docs/PSG_JA.md) も併せてご利用ください。
 

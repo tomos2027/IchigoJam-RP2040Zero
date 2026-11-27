@@ -1,4 +1,5 @@
 build/
+build-docker/
 pico-sdk/
 pico-extras/
 *.uf2
