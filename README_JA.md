@@ -106,7 +106,7 @@ cmake --build build
 |---|---|
 | BASIC | IchigoJam BASIC 1.6.1 (4K版、配列[0..357]、`WS.LED`/`WS.MODE`/`WS.PUT`/`WS.MATRIX`/`WS.XY`/`WS.SETUP`/`NEO.*`/`NEOSCROLL.*`/`RGB()`) |
 | `VER()` / `VER(1)` | 16130 / 8 (RP2040) |
-| クロック | 157.33MHz (NTSC 525ライン/60.0085Hz駆動、VREG 1.20V) |
+| クロック | 157.5MHz (NTSC 525ライン/60.0716Hz駆動、VREG 1.20V) |
 | 音声 | BEEP/PLAY単声 (PWM方形波) + 多声最大3声 (AY-3-8910互換PSGエミュ) |
 | 内部保存 | フラッシュ末尾に25本 (1本4096バイト) |
 | SD形式 | FAT32 (MBR/スーパーフロッピー)、8.3名、ルートのみ |

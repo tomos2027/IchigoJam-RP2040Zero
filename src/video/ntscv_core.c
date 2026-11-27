@@ -136,14 +136,9 @@ void ntscv_init(uint8_t gpio)
     diag_log("[B0] ntscv_init");
 
     /* クロック: 呼び出し側でNTSCクロック設定済みのこと (未設定ならここで設定)。
-       S_Dのみ157.333333MHzは整数kHzでないためPLL直接設定。
-       S_A/S_B/S_Cは157.5MHz = 整数kHzなのでset_sys_clock_khzを使う。 */
+       157.5MHz = 整数kHzなのでset_sys_clock_khzを使う (全プリセット共通)。 */
     if (clock_get_hz(clk_sys) != NTSCV_SYS_CLOCK_HZ) {
-#if NTSCV_SIG_PRESET == 0
-        set_sys_clock_pll(NTSCV_SYS_PLL_VCO_HZ, 3, 3);
-#else
         set_sys_clock_khz(157500, true);
-#endif
     }
     diag_log("[B0a] clock ok");
 
@@ -357,11 +352,11 @@ uint32_t ntscv_guard_b(void)
 /*---- 仕様の整合性をコンパイル時に確認 ----*/
 
 #if NTSCV_SIG_PRESET == 0
-static_assert(NTSCV_SYS_CLOCK_HZ == NTSCV_SYS_PLL_VCO_HZ / 9u,
-              "S_D: システムクロック = VCO 1416MHz / postdiv 3×3 = 157.333333MHz");
+static_assert(NTSCV_SYS_PLL_VCO_HZ == 0u,
+              "S_D: システムクロックはset_sys_clock_khz(157500)で設定 (元ドライバと同一)");
 #endif
 static_assert((NTSCV_PWM_WRAP + 1) * NTSCV_SAMPLES_PER_LINE == 9988,
-              "1走査線 = 9988サイクル = 63.483us (PWM 11サイクル×908サンプル)");
+              "1走査線 = 9988サイクル = 63.4286us (PWM 11サイクル×908サンプル)");
 
 #if NTSCV_FIELDS_PER_FRAME == 2
 /* インターレース: フレームは奇数ライン (525) — 境界を跨ぐチャンク (524, 0) は
@@ -376,10 +371,10 @@ static_assert(NTSCV_LINES_PER_FRAME % 2 == 0, "プログレッシブフレーム
 #define NTSCV_FIELD_CYCLES ((uint32_t)NTSCV_LINES_PER_FRAME * NTSCV_SAMPLES_PER_LINE \
                             * (NTSCV_PWM_WRAP + 1u) / NTSCV_FIELDS_PER_FRAME)
 #if NTSCV_SIG_PRESET == 0
-/* 60.000Hz±0.01Hz (うなり周期60秒超=実質静止) */
-static_assert(NTSCV_SYS_CLOCK_HZ * 1000ull / NTSCV_FIELD_CYCLES >= 59990ull &&
-              NTSCV_SYS_CLOCK_HZ * 1000ull / NTSCV_FIELD_CYCLES <= 60010ull,
-              "S_D: フィールドレートは60.000Hz±0.01Hz");
+/* 60.0716Hz (157.5MHz、サブキャリア規格値・元ドライバと同一クロック) */
+static_assert(NTSCV_SYS_CLOCK_HZ * 1000ull / NTSCV_FIELD_CYCLES >= 60050ull &&
+              NTSCV_SYS_CLOCK_HZ * 1000ull / NTSCV_FIELD_CYCLES <= 60090ull,
+              "S_D: フィールドレートは約60.07Hz");
 #elif NTSCV_SIG_PRESET == 3
 /* S_C: 60.07Hz (元ドライバと同じ157.5MHz、現行構造) */
 static_assert(NTSCV_SYS_CLOCK_HZ * 1000ull / NTSCV_FIELD_CYCLES >= 60050ull &&

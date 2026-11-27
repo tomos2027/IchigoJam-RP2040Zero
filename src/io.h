@@ -31,7 +31,7 @@ static void led_builtin_color(uint32_t grb);
 #define PLEN_MAX 2000
 #define ANA_THRESHOLD (1024 / 4)
 
-//ラズパイの動作クロックはNTSC駆動の157.333333MHz
+//ラズパイの動作クロックはNTSC駆動の157.5MHz
 //PWMコマンド: PWM port,plen[,period]
 //  period 省略/>=0 : 0.01msec単位 (1MHzカウンタ)。period=2000で20msec (50Hz、サーボ用)
 //  period < 0      : 高速モード。plen/|period| は 1/48µs 単位。

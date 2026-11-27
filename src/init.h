@@ -3,7 +3,7 @@
 #include "all_includes.h"
 
 //Waveshare RP2040-Zero (RP2040)
-// NTSC駆動 (既定: 525ライン/157.333333MHz/60.0085Hz、VREG 1.20Vオーバークロック)
+// NTSC駆動 (既定: 525ライン/157.5MHz/60.0716Hz、VREG 1.20Vオーバークロック)
 // プリセット切替 (-DNTSCV_SIG_PRESET) により元ドライバ系信号にもできる
 //IchigoJam
 #define FONT_SIZE 8
@@ -136,7 +136,7 @@ static void __attribute__((noinline)) __not_in_flash_func(field_display_update)(
     }
 }
 
-//NTSCビデオ出力を初期化し開始する (クロックはNTSC用の157.333333MHz設定済みのこと)
+//NTSCビデオ出力を初期化し開始する (クロックはNTSC用の157.5MHz設定済みのこと)
 void ntsc_init() {
     ntsc_fg.canary1 = 0xC0DE6001;//診断用カナリア
     ntsc_fg.canary2 = 0xC0DE6002;
@@ -309,15 +309,10 @@ void pico_init() {
 
     vreg_set_voltage(VREG_VSEL);
     sleep_ms(10);//電圧が安定してからクロックを上げる
-    // Run system at NTSC clock.
-    // S_D (既定): 157.333333MHz = PLL VCO 1416MHz / 9。整数kHzでないためPLL直接設定。
-    // S_A/S_B/S_C: 157.5MHz = 整数kHzなのでset_sys_clock_khzを使用。
+    // Run system at NTSC clock (157.5MHz = 4×カラーサブキャリア3.579545MHz。
+    // 全プリセット共通: 整数kHzのためset_sys_clock_khzを使用)
     if (clock_get_hz(clk_sys) != NTSCV_SYS_CLOCK_HZ) {
-#if NTSCV_SIG_PRESET == 0
-        set_sys_clock_pll(NTSCV_SYS_PLL_VCO_HZ, 3, 3);
-#else
         set_sys_clock_khz(157500, true);
-#endif
     }
 
     stdio_uart_init();//クロックを変えてから初期化する

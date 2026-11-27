@@ -828,7 +828,7 @@ cmake --build build
 |---|---|
 | BASIC | IchigoJam BASIC 1.6.1 (4K版、配列[0..357]、`WS.LED`/`WS.MODE`/`WS.PUT`/`WS.MATRIX`/`WS.XY`/`WS.SETUP`/`NEO.*`/`NEOSCROLL.*`/`RGB()`/`IR.IN`/`IR.OUT`/`ENV.IN`) |
 | `VER()` / `VER(1)` | 16130 / 8 |
-| CPUクロック | 157.33MHz (NTSC 525ライン/60.0085Hz駆動、VREG 1.20V) |
+| CPUクロック | 157.5MHz (NTSC 525ライン/60.0716Hz駆動、VREG 1.20V) |
 | 映像 | NTSCコンポジット、32×24文字 |
 | 入力 | USBキーボード (Type-C)、UART、IN1-4/BTN |
 | 音声 | BEEP/PLAY単声 (PWM方形波) + 多声最大3声 (AY-3-8910互換PSGエミュ、約56kHz混合出力) |

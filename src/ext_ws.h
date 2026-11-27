@@ -6,10 +6,10 @@
 #include "hardware/pio.h"
 #include "ws2812.pio.h"
 
-//1クロックの時間 (NTSC:157.333333MHz=約6.36ns)
-//100nsあたりのNOP数: 157.333333MHz→16個
+//1クロックの時間 (NTSC:157.5MHz=約6.35ns)
+//100nsあたりのNOP数: 157.5MHz→約16個
 #define NOP4_1575 __asm volatile("nop");__asm volatile("nop");__asm volatile("nop");__asm volatile("nop");
-#define SLEEP_100NS_NTSC NOP4_1575 NOP4_1575 NOP4_1575 NOP4_1575 //16 nop=約102ns (157.333333MHz)
+#define SLEEP_100NS_NTSC NOP4_1575 NOP4_1575 NOP4_1575 NOP4_1575 //16 nop=約102ns (157.5MHz)
 
 //WS2812B (800kHz) の1ビット分のNOPグループ (1グループ=約102ns)
 //規格: T0H 0.40us / T1H 0.80us / T0L 0.85us / T1L 0.45us (各±0.15us)
@@ -28,7 +28,7 @@
 //隣接ビットのHiパルスと連結してWS2812のデコードが破綻する (さらにラインがHiのまま
 //放置されてリセット期間が取れなくなる)
 //bit=1: High 約810ns + Low 約450ns、bit=0: High 約400ns + Low 約800ns (invert=0時)
-static void __noinline __not_in_flash_func(wsled_send_one_signal_1575) (uint8 pin, bool bit, bool invert) { //NTSCモード (157.333333MHz)
+static void __noinline __not_in_flash_func(wsled_send_one_signal_1575) (uint8 pin, bool bit, bool invert) { //NTSCモード (157.5MHz)
     gpio_put(pin, !invert);
     if (bit) {
         WS_HIGH_1
