@@ -212,6 +212,17 @@ static void __noinline ws_out(int port, int nled, int repeat) {
         return;
     }
 
+    //PIO送信中は映像DMA以外の割込みをマスクする (SAVE/DISTANCEと同じNVIC方式)。
+    //60Hzタイマ (表示更新+tuh_task) 等の長い割込みがFIFO補給を止めると、
+    //TX FIFO (8語=240µs) が枯渇してSMがstall命令で停止し、データ線が
+    //テープのリセット閾値以上LOWになり疑似リセットが発生する。
+    //すると残りのデータがLED 0から再ラッチされ、パターンがランダムな
+    //オフセットで重複点灯する (LED数が多い=送信が長いほど発生しやすい)。
+    //映像DMA割込み (DMA_IRQ_1) は動作継続 (ハンドラ最大~125µs < FIFO 240µsのため
+    //枯渇しない)。60Hzタイマが送信中 (~2ms) 一時停止するため表示が一瞬静止するが
+    //DMA信号は継続し、復帰後にmerge経路で自動同期する
+    uint32_t nvic_state = nvic_hw->iser;
+    nvic_hw->icer = ~(1u << DMA_IRQ_1);
     ws_pio_configure(pin, inv);//この中でリセットを出す
     //repeat回数分、リセットを挟まず連続送信する (公式IchigoJam仕様:
     //n個分のパターンが後続LEDへ流れて、テープ長分タイル状に繰り返される。
@@ -227,6 +238,7 @@ static void __noinline ws_out(int port, int nled, int repeat) {
     while (!pio_sm_is_tx_fifo_empty(ws_pio, ws_pio_sm)) {
         tight_loop_contents();
     }
+    nvic_hw->iser = nvic_state;
     sleep_us(WS_RESET_US + 30); //最後の1ワード(約30us) + リセット(WS_RESET_US) でラッチ
     ws_pio_release(pin, inv);
 }
