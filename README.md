@@ -11,6 +11,7 @@ A port of IchigoJam BASIC 1.6.1 (4K version) for the **Waveshare RP2040-Zero** b
 - SD card: [GivetakeJam_P](https://github.com/Canon-boy4/ichigojam-firm/tree/rp2350-16130) shared-pin design (GP6/7/8/10/11)
 - **WS2812 NeoMatrix**: `WS.MODE`/`WS.PUT`/`RGB()` plus `WS.MATRIX w,h` and `WS.XY x,y,R,G,B` for easy x,y drawing on 8x8/5x5 panels (serpentine wiring and flips supported). `WS.SETUP n,offset,invert` sets the LED count limit, read offset, and output signal inversion (for inverted driver stages)
 - **NEO.* / NEOSCROLL.***: Annex WiFi-compatible NeoPixel commands — `NEO.PIXEL`/`NEO.STRIP`/`NEO.ROTATE*` with RGB555 packed colors and color functions (`NEO.RGB()` etc.), plus text rendering and scrolling on 8x8 dot-matrix panels (`NEOSCROLL.SETUP`/`PRINT`/`SCROLL`)
+- **`PCA9685.*`**: I2C 16-channel PWM driver (PCA9685) control — 16 servos or 16-channel LED dimming (`PCA9685.SETUP`/`SETFREQ`/`PWM`, see docs/PCA9685_JA.md)
 - **`LED 1`/`LED 0` controls the onboard WS2812 (GP16)** — 1 = half-brightness red, 0 = off. **`WS.LED 8,n` is on GP2** (WS2812), **`WS.LED 7,n` on GP15** (external LED strip). GP16 is also used for boot blink and error diagnostics
 - **No back-pad pins (GP17-25) are used** — all functions on side edge pads
 

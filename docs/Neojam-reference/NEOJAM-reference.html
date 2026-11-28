@@ -222,6 +222,9 @@ a {
 <tr><td>NEOSCROLL.FILL ほか / ネオ・スクロール・フィル</td><td>キャンバス操作（FILL COLOR{,x,y,w,h}: 領域塗潰し。TEXT.POS x,y: 描画カーソル (左上原点・y下向き)。TEXT.FONT n: フォント1-5 (既定1=5x7プロポーショナル)。TEXT.BRIGHTNESS b: テキスト明るさ0-255 (既定255)。BRIGHTNESS b: 全体明るさ0-255 (既定255、SHOW時に適用)）</td><td>NEOSCROLL.FILL 0</td></tr>
 <tr><td>NEOSCROLL.PRINT "text"{,"colors"} / ネオ・スクロール・プリント</td><td>カーソル位置へテキストを描画（textは半角ASCII。colorsは1文字1色の色記号 (R=赤 G=緑 B=青 W=白 K=黒 C=シアン M=マゼンタ Y=黄 O=オレンジ P=紫等、大文字=標準色小文字=暗色)、文字列より短い/省略部分は前回色を引継。OR書込みのため上書きはFILLで消してから）</td><td>NEOSCROLL.PRINT "HELLO","R"</td></tr>
 <tr><td>NEOSCROLL.SHOW 数1,数2 ほか / ネオ・スクロール・ショー</td><td>表示操作（SHOW x,y: キャンバスの(x,y)を左上とする表示範囲をLEDへ転送。LIMITS x1{,x2{,y1{,y2}}}: スクロール可動範囲。SYNC: MODEの始端へ復帰。MODE m: 0=右→左 1=下→上 2=左→右 3=上→下。SCROLL/OSCILLATE: 呼出ごとに1pxスクロール (関数形式は周回/始点復帰時に1を返す)。X()/Y(): 現在位置。DELETE: 状態リセット）</td><td>NEOSCROLL.SHOW NEOSCROLL.X(),0</td></tr>
+<tr><td>PCA9685.SETUP 数1 / ピー・シー・エー・キュウハチゴ・セットアップ</td><td>I2C接続のPCA9685 (16チャンネルPWMドライバ) を初期化する（数1=I2Cアドレス 7bit 0x40-0x7F、既定0x40。スリープ解除+自動インクリメント+トーテンポール出力に設定。範囲外はIllegal argument。CLVで未実行状態に戻る）</td><td>PCA9685.SETUP #40</td></tr>
+<tr><td>PCA9685.SETFREQ 数1 / ピー・シー・エー・キュウハチゴ・セット・エフ・レック</td><td>PWM周波数を設定する（数1=24-1526Hz。サーボは50。スリープ→プリスケール設定→復帰で即時反映。SETUP未実行はIllegal argument）</td><td>PCA9685.SETFREQ 50</td></tr>
+<tr><td>PCA9685.PWM 数1,数2 / ピー・シー・エー・キュウハチゴ・ピー・ダブリュー・エム</td><td>チャンネル数1 (0-15) に12bitデューティ数2 (0-4095、範囲外はクランプ) を設定する（0=消灯、4095=ほぼ全開。サーボは50Hz設定で value≈パルス幅(ms)÷20×4096。SETUP未実行はIllegal argument。I2C転送の失敗は無視）</td><td>PCA9685.PWM 0,307</td></tr>
 
 <tr class="sec"><th colspan="3">NEOJAM拡張 — SDカード (FAT32、スロット200-299)</th></tr>
 <tr><td>SDON / エス・ディー・オン</td><td>SDカードを初期化してFAT32をマウントする → SD ready (FAT32, 1000kHz)（読み取りエラー時は100kHz）。以後 SAVE/LOAD/LRUN/FILES の200-299がSDカードになる。SDと共用のピン (IN3/IN4/OUT1/OUT3/OUT4 = GP6/7/8/10/11) の I/O命令 (IN/OUT/PWM/WS.LED/IR.IN/IR.OUT) はブロックされる</td><td>SDON</td></tr>

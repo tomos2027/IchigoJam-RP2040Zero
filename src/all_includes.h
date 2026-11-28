@@ -69,6 +69,8 @@
 #include "ext_ej.h"
 // NEO.* / NEOSCROLL.* (Annex WiFi互換のWS2812ストリップ・マトリクス制御) — basic.h後・oled_fonts後
 #include "ext_neo.h"
+// PCA9685 (I2C 16ch PWM/サーボドライバ) — basic.h後・i2c.h後
+#include "ext_pca9685.h"
 #include "usr.h"
 #include "init.h"
 

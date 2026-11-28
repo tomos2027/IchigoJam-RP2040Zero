@@ -4,7 +4,7 @@ NEOJAM (IchigoJam RP2040-Zero 版) のBASICリファレンスを格納してい�
 
 | HTML | コマンド別ファイル | 内容 |
 |---|---|---|
-| [NEOJAM.html](NEOJAM.html) | [NEOJAM-BASIC/](NEOJAM-BASIC/) | Waveshare RP2040-Zero (RP2040) 版。NTSCコンポジット専用、VIDEO 9/10 カラー表示、WS.LED 0-11、NEO.*/NEOSCROLL.*、PSG 3声、SDカード、HC-SR04距離センサ |
+| [NEOJAM-reference.html](NEOJAM-reference.html) | [NEOJAM-BASIC/](NEOJAM-BASIC/) | Waveshare RP2040-Zero (RP2040) 版。NTSCコンポジット専用、VIDEO 9/10 カラー表示、WS.LED 0-11、NEO.*/NEOSCROLL.*、PSG 3声、SDカード、HC-SR04距離センサ |
 
 IchigoJam BASIC 1.6.1 (4K版) ベースです。
 機器固有の仕様 (ピンマップ・保存スロット・拡張コマンド) は

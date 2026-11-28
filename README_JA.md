@@ -13,6 +13,7 @@ IchigoJam BASIC 1.6.1 (4K版) の **Waveshare RP2040-Zero** (RP2040) 移植・**
 - **ANA() アナログ入力対応** (IN1=GP27/ADC1、IN2=GP26/ADC0、BTN=GP28/ADC2)
 - **WS2812 NeoMatrix**: `WS.MODE`/`WS.PUT`/`RGB()` に加え、`WS.MATRIX w,h` と `WS.XY x,y,R,G,B` で8x8/5x5パネルへx,y座標で描画 (ジグザグ配線・左右/上下反転対応)。`WS.SETUP n,offset,invert` でLED数上限・オフセット・出力信号の反転 (逆相ドライバ駆動用) を設定
 - **NEO.* / NEOSCROLL.***: Annex WiFi互換のNeoPixel制御。`NEO.PIXEL`/`NEO.STRIP`/`NEO.ROTATE*` (RGB555パック色・`NEO.RGB()`等の色関数付き) と、8x8ドットマトリクスへのテキスト表示・スクロール (`NEOSCROLL.SETUP`/`PRINT`/`SCROLL`)
+- **`PCA9685.*`**: I2C接続の16チャンネルPWMドライバ (PCA9685) 制御。サーボ16個やLED調光16ch (`PCA9685.SETUP`/`SETFREQ`/`PWM`、詳細は docs/PCA9685_JA.md)
 - **`LED 1`/`LED 0` は基板内蔵WS2812 (GP16)** — 1 で光度半分の赤色点灯、0 で消灯。**`WS.LED 8,n` は GP2** (WS2812)、**`WS.LED 7,n` は GP15** (外部WS2812)。GP16 は起動表示・エラー診断にも使用
 - **裏面パッド (GP17-25) は未使用** — すべての機能が側面エッジパッドで完結
 
@@ -107,7 +108,7 @@ cmake --build build
 ## スペック
 | 項目 | 値 |
 |---|---|
-| BASIC | IchigoJam BASIC 1.6.1 (4K版、配列[0..357]、`WS.LED`/`WS.MODE`/`WS.PUT`/`WS.MATRIX`/`WS.XY`/`WS.SETUP`/`NEO.*`/`NEOSCROLL.*`/`RGB()`) |
+| BASIC | IchigoJam BASIC 1.6.1 (4K版、配列[0..357]、`WS.LED`/`WS.MODE`/`WS.PUT`/`WS.MATRIX`/`WS.XY`/`WS.SETUP`/`NEO.*`/`NEOSCROLL.*`/`RGB()`/`PCA9685.*`/`DISTANCE()`) |
 | `VER()` / `VER(1)` | 16130 / 8 (RP2040) |
 | クロック | 157.5MHz (NTSC 525ライン/60.0716Hz駆動、VREG 1.20V) |
 | 音声 | BEEP/PLAY単声 (PWM方形波) + 多声最大3声 (AY-3-8910互換PSGエミュ) |

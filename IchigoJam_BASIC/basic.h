@@ -498,6 +498,10 @@ S_INLINE void command_ns_show(); // NEOSCROLL.SHOW x,y
 S_INLINE void command_ns_limits(); // NEOSCROLL.LIMITS x1{,x2}{,y1}{,y2}
 S_INLINE void command_ns_sync(); // NEOSCROLL.SYNC
 S_INLINE void command_ns_mode(); // NEOSCROLL.MODE m
+S_INLINE void command_pca9685_setup(); // PCA9685.SETUP address (I2Cアドレス 7bit 0x40-0x7F)
+S_INLINE void command_pca9685_setfreq(); // PCA9685.SETFREQ freq (PWM周波数 24-1526Hz)
+S_INLINE void command_pca9685_pwm(); // PCA9685.PWM pin,value (pin 0-15、value 0-4095)
+void pca9685_reset(void); // PCA9685アドレスを既定へ戻しSETUP必須状態へ (ext_pca9685.h)
 S_INLINE void command_ns_scroll(int oscillate); // NEOSCROLL.SCROLL/OSCILLATE (コマンド形式)
 S_INLINE int func_ns_scroll(int oscillate); // NEOSCROLL.SCROLL/OSCILLATE (関数形式: 周期完了で1)
 S_INLINE int func_ns_x(); // NEOSCROLL.X() → 現在のスクロールX位置
@@ -543,6 +547,7 @@ static void basic_clearVars() {
 	memclear((uint8*)var, (IJB_SIZEOF_ARRAY + IJB_SIZEOF_VAR) * 2);
 	memclear((uint8*)var2, (IJB_SIZEOF_ARRAY_MAX - IJB_SIZEOF_ARRAY) * 2); // 拡張配列変数 [102]-[357] もクリア (4K版)
 	ws_data_reset(); // WS.MODE (モード0/オフセット0) と専用バッファもクリア (WS2812 NeoMatrix)
+	pca9685_reset(); // PCA9685アドレスを既定 (#40) へ戻しSETUP必須状態へ
 }
 S_INLINE void basic_init() {
 	basic_clearVars();
@@ -754,6 +759,9 @@ int basic_execute(char* commandline) {
 			case TOKEN_NS_LIMITS: command_ns_limits();						break; // NEOSCROLL.LIMITS x1{,x2}{,y1}{,y2}
 			case TOKEN_NS_SYNC: command_ns_sync();							break; // NEOSCROLL.SYNC
 			case TOKEN_NS_MODE: command_ns_mode();							break; // NEOSCROLL.MODE m
+			case TOKEN_PCA9685_SETUP: command_pca9685_setup();				break; // PCA9685.SETUP address (I2C 16ch PWM)
+			case TOKEN_PCA9685_SETFREQ: command_pca9685_setfreq();			break; // PCA9685.SETFREQ freq
+			case TOKEN_PCA9685_PWM: command_pca9685_pwm();					break; // PCA9685.PWM pin,value
 			case TOKEN_NSCROLL_SCROLL: command_ns_scroll(0);				break; // NEOSCROLL.SCROLL (コマンド兼関数)
 			case TOKEN_NSCROLL_OSCILLATE: command_ns_scroll(1);				break; // NEOSCROLL.OSCILLATE (コマンド兼関数)
 			default:
